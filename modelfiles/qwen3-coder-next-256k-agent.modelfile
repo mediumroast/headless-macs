@@ -1,0 +1,65 @@
+FROM /Users/mihay42/models/qwen3-coder-next-q6k/Qwen3-Coder-Next-Q6_K-merged.gguf
+
+PARAMETER num_ctx 262144
+PARAMETER num_keep 48
+PARAMETER temperature 0.15
+PARAMETER top_k 20
+PARAMETER top_p 0.85
+PARAMETER repeat_penalty 1.1
+PARAMETER num_predict -1
+
+SYSTEM """You are an expert coding assistant with tool-use capabilities. /no_think
+
+## Tool response rules
+- After receiving a tool response, read it fully before deciding what to do next
+- If a response contains "terminal": true, "do_not_call_again": true, or text starting with "STOP":
+  output the message_to_user field verbatim and stop calling tools immediately
+- Never call the same tool twice in a row with identical arguments
+- After all required steps are complete, summarize what was done and stop
+- When uncertain, ask the user — do not retry a failed or terminal tool response
+"""
+
+TEMPLATE """{{- if or .System .Tools }}<|im_start|>system
+{{- if .System }}
+{{ .System }}
+{{- end }}
+{{- if .Tools }}
+
+# Tools
+
+You may call one or more functions to assist with the user query.
+
+You are provided with function signatures within <tools></tools> XML tags:
+<tools>
+{{- range .Tools }}
+{"type": "function", "function": {{ .Function }}}
+{{- end }}
+</tools>
+
+For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:
+<tool_call>
+{"name": <function-name>, "arguments": <args-json-object>}
+</tool_call>
+{{- end }}
+<|im_end|>
+{{ end }}
+{{- range .Messages }}
+{{- if eq .Role "user" }}<|im_start|>user
+{{ .Content }}<|im_end|>
+{{ else if eq .Role "assistant" }}<|im_start|>assistant
+{{ if .Content }}{{ .Content }}
+{{- else if .ToolCalls }}{{- range .ToolCalls }}<tool_call>
+{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
+</tool_call>
+{{- end }}
+{{- end }}<|im_end|>
+{{ else if eq .Role "tool" }}<|im_start|>user
+<tool_response>
+{{ .Content }}
+</tool_response><|im_end|>
+{{ end }}
+{{- end }}<|im_start|>assistant
+"""
+
+PARAMETER stop <|im_start|>
+PARAMETER stop <|im_end|>

@@ -44,7 +44,7 @@ Override any value in `config.json` under `tools.ollama`.
 | 72B | ~41 GB | ~49 GB | ~77 GB | ~144 GB |
 | 405B | ~230 GB | — | — | — |
 
-**Rule of thumb:** leave ~4 GB for macOS overhead. On a 64 GB machine, your usable model budget is ~60 GB.
+**Rule of thumb:** leave ~4 GB for macOS overhead and budget for KV cache (see below). On a 64 GB machine, your usable model budget is well under 60 GB at large context windows.
 
 ---
 
@@ -106,6 +106,61 @@ ollama pull llama3.1:70b-instruct-q8_0         # ~75 GB
 
 # Multiple models loaded simultaneously at this tier
 ```
+
+---
+
+## KV Cache — The Hidden Memory Cost
+
+Model weights are only part of the memory equation. The KV (key-value) cache grows with
+context window size and is the primary cause of unexpected memory pressure on large models.
+
+```
+Total memory = model weights + KV cache + OS (~8 GB) + other loaded models
+```
+
+### KV Cache Size Formula
+
+```
+KV_cache ≈ num_ctx × num_layers × 2 × num_heads × head_dim × bytes_per_element
+```
+
+For practical estimation, use these approximate figures:
+
+| Model class | Context | KV cache (approx) |
+|---|---|---|
+| 7B–8B dense | 128K | ~4–6 GB |
+| 7B–8B dense | 256K | ~8–12 GB |
+| 30B–35B dense | 128K | ~10–15 GB |
+| 30B–35B dense | 256K | ~20–30 GB |
+| 80B MoE (3B active) | 128K | ~8–12 GB |
+| 80B MoE (3B active) | 256K | ~15–25 GB |
+
+KV cache grows with **usage within a session**, not on load. A model registered with 256K
+context only consumes the full cache if a client sends a full 256K token request.
+Typical coding sessions use 8–32K, so the cache stays well below maximum.
+
+### Real Example: nemotron-cascade-2:30b on 128 GB
+
+```
+62 GB  qwen3-coder-next Q6_K (primary model)
+24 GB  nemotron-cascade-2:30b weights
+25 GB  nemotron KV cache at 256K context
+ 8 GB  macOS overhead
+─────
+119 GB — leaves only 9 GB margin. Any additional load causes eviction.
+```
+
+At ≤32K context, nemotron's KV cache drops to ~5 GB, making both models loadable.
+But a single 256K context request causes the primary model to be evicted.
+**Verdict:** nemotron-cascade-2:30b is not compatible with the primary 256K workflow on 128 GB.
+
+### Effective Memory Budget by Hardware
+
+| Mac | RAM | OS | Primary model | KV headroom | Notes |
+|---|---|---|---|---|---|
+| Mac Mini M4 | 64 GB | 8 GB | 32B Q6_K (~26 GB) | ~30 GB | 128K context comfortable; 256K tight |
+| Mac Studio M4 Max | 128 GB | 8 GB | 80B MoE Q6_K (~62 GB) | ~58 GB | 256K context comfortable; embeddings alongside |
+| Mac Studio M4 Ultra | 192 GB | 8 GB | 80B MoE Q8_0 (~85 GB) | ~99 GB | Multiple large models; full 256K on all |
 
 ---
 

@@ -1,0 +1,56 @@
+FROM /Users/mihay42/models/qwen3-coder-next-q6k/Qwen3-Coder-Next-Q6_K-merged.gguf
+
+PARAMETER num_ctx 262144
+PARAMETER num_keep 48
+PARAMETER temperature 0.6
+PARAMETER top_k 40
+PARAMETER top_p 0.85
+PARAMETER repeat_penalty 1.0
+PARAMETER num_predict -1
+
+SYSTEM "You are an expert coding assistant. Be concise and precise."
+
+TEMPLATE """{{- if or .System .Tools }}<|im_start|>system
+{{- if .System }}
+{{ .System }}
+{{- end }}
+{{- if .Tools }}
+
+# Tools
+
+You may call one or more functions to assist with the user query.
+
+You are provided with function signatures within <tools></tools> XML tags:
+<tools>
+{{- range .Tools }}
+{"type": "function", "function": {{ .Function }}}
+{{- end }}
+</tools>
+
+For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:
+<tool_call>
+{"name": <function-name>, "arguments": <args-json-object>}
+</tool_call>
+{{- end }}
+<|im_end|>
+{{ end }}
+{{- range .Messages }}
+{{- if eq .Role "user" }}<|im_start|>user
+{{ .Content }}<|im_end|>
+{{ else if eq .Role "assistant" }}<|im_start|>assistant
+{{ if .Content }}{{ .Content }}
+{{- else if .ToolCalls }}
+{{- range .ToolCalls }}<tool_call>
+{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
+</tool_call>
+{{- end }}
+{{- end }}<|im_end|>
+{{ else if eq .Role "tool" }}<|im_start|>user
+<tool_response>
+{{ .Content }}
+</tool_response><|im_end|>{{ end }}
+{{- end }}<|im_start|>assistant
+"""
+
+PARAMETER stop <|im_start|>
+PARAMETER stop <|im_end|>

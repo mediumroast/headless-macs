@@ -1,621 +1,486 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# setup.sh — System Baseline for Mac LLM Optimizer
+#
+# Configures the OS for sustained LLM inference: power management, network
+# stack tuning, service suppression, SSH hardening, and Xcode CLT install.
+#
+# Run order: precheck.sh → [storage-volume.sh] → setup.sh → install-tools.sh
+#
+# Requires: sudo (prompted once at start)
+# Idempotent: safe to run multiple times — skips already-applied settings
 
-# Headless Mac Setup - Master Script
-# Orchestrates setup, management, and removal of all components
-# Components: Homebrew, Power Management, Ollama, Colima
+set -euo pipefail
 
-set -e
+# ---------------------------------------------------------------------------
+# Guard: Apple Silicon only
+# ---------------------------------------------------------------------------
+ARCH=$(uname -m)
+if [[ "$ARCH" != "arm64" ]]; then
+  echo "ERROR: This toolset requires Apple Silicon (arm64). Detected: $ARCH"
+  exit 1
+fi
 
-# Get the directory where this script is located
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "ERROR: macOS required."
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Detect macOS version and hardware
+# ---------------------------------------------------------------------------
+OS_VERSION=$(sw_vers -productVersion)
+OS_MAJOR=$(echo "$OS_VERSION" | cut -d. -f1)
+HW_MODEL=$(sysctl -n hw.model 2>/dev/null || echo "unknown")
+RAM_GB=$(( $(sysctl -n hw.memsize) / 1024 / 1024 / 1024 ))
+
+# ---------------------------------------------------------------------------
+# Logging — tee all output to a timestamped log file
+# ---------------------------------------------------------------------------
+LOG_DIR="/var/log/mac-llm-setup"
+sudo mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/setup-$(date +%Y%m%d-%H%M%S).log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+echo "=== setup.sh started at $(date) ==="
+echo "Hardware: $HW_MODEL | RAM: ${RAM_GB}GB | macOS: $OS_VERSION"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Config loading
+# ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="$SCRIPT_DIR/config.json"
 
-# Source common utilities
-source "$SCRIPT_DIR/lib/common.sh"
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  echo "[WARN] config.json not found at default location: $CONFIG_FILE"
+  read -rp "       Path to config.json: " CONFIG_FILE
+  [[ -f "$CONFIG_FILE" ]] || { echo "ERROR: Not found: $CONFIG_FILE"; exit 1; }
+fi
 
-# Component scripts
-HOMEBREW_SCRIPT="$SCRIPT_DIR/scripts/homebrew_setup.sh"
-POWER_SCRIPT="$SCRIPT_DIR/scripts/power_management.sh"
-OLLAMA_SCRIPT="$SCRIPT_DIR/scripts/ollama_setup.sh"
-COLIMA_SCRIPT="$SCRIPT_DIR/scripts/colima_setup.sh"
+if ! command -v jq &>/dev/null; then
+  echo "ERROR: jq is required. Install with: brew install jq"
+  exit 1
+fi
 
-# Show main menu
-show_menu() {
-    clear
-    print_header "Headless Mac Setup"
-    
-    echo "Select an option:"
-    echo ""
-    echo "  Installation:"
-    echo "    1) Install Homebrew"
-    echo "    2) Configure Power Management"
-    echo "    3) Install Ollama"
-    echo "    4) Install Colima + Docker"
-    echo "    5) Full Setup (All of the above)"
-    echo ""
-    echo "  Management:"
-    echo "    6) Enable All Services"
-    echo "    7) Disable All Services"
-    echo "    8) Show Status (All Components)"
-    echo ""
-    echo "  Individual Status:"
-    echo "    9) Homebrew Status"
-    echo "   10) Power Management Status"
-    echo "   11) Ollama Status"
-    echo "   12) Colima Status"
-    echo ""
-    echo "  Removal:"
-    echo "   13) Remove Ollama"
-    echo "   14) Remove Colima"
-    echo "   15) Remove All Components"
-    echo ""
-    echo "    0) Exit"
-    echo ""
+CONFIG=$(cat "$CONFIG_FILE")
+echo "[CONFIG] Loaded $CONFIG_FILE"
+
+# ---------------------------------------------------------------------------
+# SIP detection
+# ---------------------------------------------------------------------------
+SIP_RAW=$(csrutil status 2>/dev/null || echo "unknown")
+SIP_ENABLED=true
+if echo "$SIP_RAW" | grep -q "disabled"; then
+  SIP_ENABLED=false
+fi
+
+if [[ "$SIP_ENABLED" == true ]]; then
+  echo "[WARN] SIP is enabled — some service suppression will not persist across reboots"
+  echo "       To disable SIP: boot Recovery Mode → Terminal → 'csrutil disable'"
+  echo "       Continuing with non-SIP-required changes only..."
+else
+  echo "[INFO] SIP is disabled — full service suppression available"
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# Sudo keepalive — request once, refresh in background
+# ---------------------------------------------------------------------------
+echo "[SUDO] This script requires administrator privileges."
+sudo -v
+while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
+SUDO_KEEPALIVE_PID=$!
+trap 'kill $SUDO_KEEPALIVE_PID 2>/dev/null' EXIT
+
+echo ""
+
+# ---------------------------------------------------------------------------
+# Idempotency helpers
+# ---------------------------------------------------------------------------
+
+# Apply a pmset setting only if the current value differs
+pmset_apply() {
+  local key="$1" value="$2"
+  local current
+  current=$(pmset -g | awk -v k="$key" '$1==k{print $2}' | head -1)
+  if [[ "$current" == "$value" ]]; then
+    echo "[SKIP] pmset $key already $value"
+  else
+    sudo pmset -a "$key" "$value"
+    echo "[SET]  pmset $key $value  (was: ${current:-unset})"
+  fi
 }
 
-# Full setup
-full_setup() {
-    print_header "Full Headless Mac Setup"
-    
-    print_info "This will install and configure:"
-    echo "  1. Homebrew (package manager)"
-    echo "  2. Power Management (24/7 operation)"
-    echo "  3. Ollama (LLM inference)"
-    echo "  4. Colima + Docker (containers)"
-    echo ""
-    
-    if ! confirm_action "Proceed with full setup?"; then
-        print_warning "Setup cancelled"
-        return
-    fi
-    
-    # Step 1: Homebrew
-    print_separator
-    print_header "Step 1/4: Homebrew"
-    if command_exists brew; then
-        print_status "Homebrew already installed"
-    else
-        "$HOMEBREW_SCRIPT" setup
-    fi
-    
-    # Step 2: Power Management
-    print_separator
-    print_header "Step 2/4: Power Management"
-    if confirm_action "Configure power management for 24/7 operation?"; then
-        "$POWER_SCRIPT" setup
-    else
-        print_info "Skipping power management"
-    fi
-    
-    # Step 3: Ollama
-    print_separator
-    print_header "Step 3/4: Ollama"
-    if confirm_action "Install and configure Ollama?"; then
-        "$OLLAMA_SCRIPT" setup
-    else
-        print_info "Skipping Ollama"
-    fi
-    
-    # Step 4: Colima
-    print_separator
-    print_header "Step 4/4: Colima + Docker"
-    if confirm_action "Install and configure Colima with Docker?"; then
-        "$COLIMA_SCRIPT" setup
-    else
-        print_info "Skipping Colima"
-    fi
-    
-    # Summary
-    print_separator
-    print_header "Setup Complete!"
-    
-    print_status "All components installed and configured"
-    echo ""
-    print_info "Next steps:"
-    echo "  • Test reboot to verify auto-start"
-    echo "  • Pull an Ollama model: ollama pull qwen2.5-coder:7b"
-    echo "  • Test Ollama: ollama run qwen2.5-coder:7b 'hello'"
-    echo "  • Verify Docker: docker run hello-world"
-    echo ""
-    print_info "Check status anytime with: $0 status"
+# Apply a sysctl setting persistently via /etc/sysctl.conf
+sysctl_apply() {
+  local key="$1" value="$2"
+  local sysctl_conf="/etc/sysctl.conf"
+  if grep -q "^${key}=" "$sysctl_conf" 2>/dev/null; then
+    echo "[SKIP] sysctl $key already in $sysctl_conf"
+  else
+    echo "${key}=${value}" | sudo tee -a "$sysctl_conf" > /dev/null
+    sudo sysctl -w "${key}=${value}" 2>/dev/null || true
+    echo "[SET]  sysctl $key=$value"
+  fi
 }
 
-# Enable all services
-enable_all() {
-    print_header "Enable All Services"
-    
-    print_info "This will start/enable all services"
-    echo ""
-    
-    # Power management
-    if confirm_action "Enable headless power management?"; then
-        "$POWER_SCRIPT" enable
-    fi
-    
-    print_separator
-    
-    # Ollama
-    if [ -x "$OLLAMA_SCRIPT" ]; then
-        if confirm_action "Enable Ollama service?"; then
-            "$OLLAMA_SCRIPT" enable
-        fi
-    fi
-    
-    print_separator
-    
-    # Colima
-    if command_exists colima; then
-        if confirm_action "Enable Colima?"; then
-            "$COLIMA_SCRIPT" enable
-        fi
-    fi
-    
-    print_separator
-    print_status "Services enabled"
+# Disable a launchd service (SIP-gated for system services)
+disable_service() {
+  local domain="$1"
+  if [[ "$SIP_ENABLED" == false ]]; then
+    sudo launchctl disable "$domain" 2>/dev/null || true
+    echo "[SET]  disabled $domain"
+  else
+    echo "[SKIP-SIP] $domain (requires SIP off for persistence)"
+  fi
 }
 
-# Disable all services
-disable_all() {
-    print_header "Disable All Services"
-    
-    print_info "This will stop/disable all services"
-    print_warning "Components remain installed"
-    echo ""
-    
-    if ! confirm_action "Disable all services?"; then
-        print_warning "Operation cancelled"
-        return
-    fi
-    
-    # Colima
-    if command_exists colima; then
-        print_info "Disabling Colima..."
-        "$COLIMA_SCRIPT" disable
-    fi
-    
-    print_separator
-    
-    # Ollama
-    if [ -x "$OLLAMA_SCRIPT" ]; then
-        print_info "Disabling Ollama..."
-        "$OLLAMA_SCRIPT" disable
-    fi
-    
-    print_separator
-    
-    # Power management
-    print_info "Restoring normal power management..."
-    "$POWER_SCRIPT" disable
-    
-    print_separator
-    print_status "All services disabled"
+echo "========================================"
+echo "Section 1: Power Management"
+echo "========================================"
+echo ""
+
+# ---------------------------------------------------------------------------
+# 1.1 Power Management
+# ---------------------------------------------------------------------------
+
+# Core sleep prevention
+pmset_apply sleep         0
+pmset_apply disablesleep  1    # macOS 26 Tahoe primary mechanism
+pmset_apply disksleep     0
+pmset_apply standby       0
+pmset_apply autopoweroff  0
+pmset_apply powernap      0
+pmset_apply networkoversleep 0
+
+# Remote access
+pmset_apply womp          1    # Wake on magic packet (Wake-on-LAN)
+pmset_apply tcpkeepalive  1    # Keep SSH alive during long inference
+
+# Display — can sleep on a headless machine
+pmset_apply displaysleep  10
+
+# Performance mode — read from config (default: 2 = High Performance)
+POWER_MODE=$(echo "$CONFIG" | jq -r '.system.power_mode // 2')
+pmset_apply powermode "$POWER_MODE"
+
+# MacBook-specific: battery + AC sleep prevention, clamshell warning
+if echo "$HW_MODEL" | grep -qiE "MacBook"; then
+  echo ""
+  echo "[NOTICE] MacBook detected — applying battery and AC sleep settings"
+  sudo pmset -b sleep 0
+  sudo pmset -c sleep 0
+  echo "[WARN]   Lid-close (clamshell) behavior requires a physical HDMI/USB-C dummy plug"
+  echo "         OR run: sudo pmset -a lidwake 0  (thermal risk if vents are blocked)"
+  echo "         Recommended: purchase an HDMI dummy plug before going headless."
+fi
+
+# Caffeinate LaunchDaemon — belt-and-suspenders for Sequoia sleep regression
+CAFFEINATE_PLIST="/Library/LaunchDaemons/com.llm-server.caffeinate.plist"
+if [[ ! -f "$CAFFEINATE_PLIST" ]]; then
+  sudo tee "$CAFFEINATE_PLIST" > /dev/null <<'PLIST_EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.llm-server.caffeinate</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/caffeinate</string>
+    <string>-dimsu</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+</dict>
+</plist>
+PLIST_EOF
+  sudo chown root:wheel "$CAFFEINATE_PLIST"
+  sudo chmod 644 "$CAFFEINATE_PLIST"
+  sudo launchctl bootstrap system "$CAFFEINATE_PLIST"
+  echo "[SET]  caffeinate LaunchDaemon installed and started"
+else
+  echo "[SKIP] caffeinate LaunchDaemon already installed"
+fi
+
+echo ""
+echo "========================================"
+echo "Section 2: Network Stack Tuning"
+echo "========================================"
+echo ""
+
+# ---------------------------------------------------------------------------
+# 1.2 Network Stack Tuning (only if enabled in config)
+# ---------------------------------------------------------------------------
+NETWORK_TUNING=$(echo "$CONFIG" | jq -r '.system.network_tuning // true')
+
+if [[ "$NETWORK_TUNING" == "true" ]]; then
+  sysctl_apply "net.inet.tcp.sendspace"     "1048576"
+  sysctl_apply "net.inet.tcp.recvspace"     "1048576"
+  sysctl_apply "kern.ipc.maxsockbuf"        "8388608"
+  sysctl_apply "net.inet.tcp.autorcvbufmax" "8388608"
+  sysctl_apply "net.inet.tcp.autosndbufmax" "8388608"
+  sysctl_apply "kern.ipc.somaxconn"         "2048"
+  # NOTE: net.inet.tcp.rfc1323 removed in El Capitan — do not add
+  # NOTE: serverperfmode is Intel-only — breaks on Apple Silicon — do not add
+else
+  echo "[SKIP] Network tuning disabled in config.json"
+fi
+
+echo ""
+echo "========================================"
+echo "Section 3: Service Suppression"
+echo "========================================"
+echo ""
+
+# ---------------------------------------------------------------------------
+# 1.3 Service Suppression
+# ---------------------------------------------------------------------------
+
+# Pre-change service state snapshot (required for restore.sh)
+SNAPSHOT_DIR="/var/log/mac-llm-setup/snapshots"
+sudo mkdir -p "$SNAPSHOT_DIR"
+SNAPSHOT="$SNAPSHOT_DIR/services-$(date +%Y%m%d).txt"
+if [[ ! -f "$SNAPSHOT" ]]; then
+  launchctl print-disabled system > "$SNAPSHOT" 2>/dev/null || true
+  launchctl print-disabled "gui/$(id -u)" >> "$SNAPSHOT" 2>/dev/null || true
+  echo "[SNAPSHOT] Pre-change service state saved to $SNAPSHOT"
+else
+  echo "[SKIP] Service snapshot already exists for today: $SNAPSHOT"
+fi
+
+# Spotlight — biggest inference competitor; suppress regardless of SIP
+sudo mdutil -a -i off 2>/dev/null || true
+sudo mdutil -i off /Library/Ollama 2>/dev/null || true
+echo "[SET]  Spotlight indexing disabled"
+
+if [[ "$SIP_ENABLED" == false ]]; then
+  sudo launchctl bootout system \
+    /System/Library/LaunchDaemons/com.apple.metadata.mds.plist 2>/dev/null || true
+  sudo launchctl disable system/com.apple.metadata.mds 2>/dev/null || true
+  echo "[SET]  Spotlight daemon disabled (SIP off)"
+fi
+
+# Telemetry
+DISABLE_TELEMETRY=$(echo "$CONFIG" | jq -r '.system.disable_telemetry // true')
+if [[ "$DISABLE_TELEMETRY" == "true" ]]; then
+  disable_service "system/com.apple.analyticsd"
+  disable_service "system/com.apple.diagnosticd"
+  disable_service "system/com.apple.spindump"
+  disable_service "system/com.apple.tailspind"
+  disable_service "system/com.apple.triald"
+  disable_service "gui/$(id -u)/com.apple.UsageTrackingAgent"
+fi
+
+# Siri
+DISABLE_SIRI=$(echo "$CONFIG" | jq -r '.system.disable_siri // true')
+if [[ "$DISABLE_SIRI" == "true" ]]; then
+  disable_service "gui/$(id -u)/com.apple.Siri"
+  disable_service "gui/$(id -u)/com.apple.siriknowledged"
+  disable_service "gui/$(id -u)/com.apple.assistant_service"
+  disable_service "system/com.apple.siriinferenced"
+fi
+
+# iCloud
+DISABLE_ICLOUD=$(echo "$CONFIG" | jq -r '.system.disable_icloud // true')
+if [[ "$DISABLE_ICLOUD" == "true" ]]; then
+  disable_service "gui/$(id -u)/com.apple.cloudd"
+  disable_service "gui/$(id -u)/com.apple.cloudpaird"
+  disable_service "gui/$(id -u)/com.apple.iCloudNotificationAgent"
+fi
+
+# Media services
+DISABLE_MEDIA=$(echo "$CONFIG" | jq -r '.system.disable_media_services // true')
+if [[ "$DISABLE_MEDIA" == "true" ]]; then
+  disable_service "gui/$(id -u)/com.apple.AMPArtworkAgent"
+  disable_service "gui/$(id -u)/com.apple.AMPLibraryAgent"
+  disable_service "gui/$(id -u)/com.apple.music.d"
+fi
+
+# Biome / knowledge graph — heavy background ML that competes for ANE bandwidth
+disable_service "system/com.apple.biomed"
+disable_service "gui/$(id -u)/com.apple.biomesyncd"
+disable_service "gui/$(id -u)/com.apple.contextstored"
+disable_service "gui/$(id -u)/com.apple.knowledge-agent"
+disable_service "gui/$(id -u)/com.apple.LiveLookup"
+disable_service "gui/$(id -u)/com.apple.parsecd"
+disable_service "gui/$(id -u)/com.apple.tipsd"
+
+echo ""
+echo "--- defaults write changes ---"
+echo ""
+
+# AirDrop / Handoff
+DISABLE_AIRDROP=$(echo "$CONFIG" | jq -r '.system.disable_airdrop_handoff // true')
+if [[ "$DISABLE_AIRDROP" == "true" ]]; then
+  defaults write com.apple.NetworkBrowser DisableAirDrop -bool true
+  defaults write com.apple.coreservices.useractivityd ActivityAdvertisingAllowed -bool false
+  defaults write com.apple.coreservices.useractivityd ActivityReceivingAllowed -bool false
+  echo "[SET]  AirDrop and Handoff disabled"
+fi
+
+# App Nap — throttles background processes; disable for always-on inference
+defaults write NSGlobalDomain NSAppSleepDisabled -bool YES
+echo "[SET]  App Nap disabled"
+
+# Notification Center — DND all day (0 = midnight, 1440 = 23:59)
+DISABLE_NOTIF=$(echo "$CONFIG" | jq -r '.system.disable_notifications // true')
+if [[ "$DISABLE_NOTIF" == "true" ]]; then
+  defaults write com.apple.notificationcenterui dndStart -int 0
+  defaults write com.apple.notificationcenterui dndEnd -int 1440
+  echo "[SET]  Notification Center DND enabled (all day)"
+fi
+
+# Dock/Finder animations — reduce WindowServer load on headless machine
+defaults write com.apple.dock launchanim -bool false
+defaults write com.apple.dock expose-animation-duration -float 0
+defaults write com.apple.finder DisableAllAnimations -bool true
+killall Dock   2>/dev/null || true
+killall Finder 2>/dev/null || true
+echo "[SET]  Dock and Finder animations disabled"
+
+# Screen saver off
+defaults -currentHost write com.apple.screensaver idleTime 0
+echo "[SET]  Screen saver disabled"
+
+# Software Update
+DISABLE_SWU=$(echo "$CONFIG" | jq -r '.system.disable_software_update // true')
+if [[ "$DISABLE_SWU" == "true" ]]; then
+  sudo softwareupdate --schedule off 2>/dev/null || true
+  sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate \
+    AutomaticCheckEnabled -bool false
+  sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate \
+    AutomaticDownload -bool false
+  sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate \
+    AutomaticallyInstallMacOSUpdates -bool false
+  echo "[SET]  Automatic software updates disabled"
+fi
+
+# Time Machine
+DISABLE_TM=$(echo "$CONFIG" | jq -r '.system.disable_time_machine // true')
+if [[ "$DISABLE_TM" == "true" ]]; then
+  sudo tmutil disable 2>/dev/null || true
+  sudo tmutil addexclusion /Library/Ollama 2>/dev/null || true
+  echo "[SET]  Time Machine disabled; /Library/Ollama excluded"
+fi
+
+echo ""
+echo "========================================"
+echo "Section 4: SSH Hardening"
+echo "========================================"
+echo ""
+
+# ---------------------------------------------------------------------------
+# 1.4 SSH Hardening
+# ---------------------------------------------------------------------------
+SSHD_CONFIG="/etc/ssh/sshd_config"
+
+# Backup sshd_config if not already done today
+SSHD_BACKUP="${SSHD_CONFIG}.bak-$(date +%Y%m%d)"
+if [[ ! -f "$SSHD_BACKUP" ]]; then
+  sudo cp "$SSHD_CONFIG" "$SSHD_BACKUP" 2>/dev/null || true
+  echo "[BACKUP] $SSHD_CONFIG → $SSHD_BACKUP"
+fi
+
+# Enable SSH
+sudo systemsetup -setremotelogin on 2>/dev/null || true
+echo "[SET]  Remote Login (SSH) enabled"
+
+# Apply sshd settings idempotently
+set_sshd() {
+  local key="$1" value="$2"
+  if grep -qE "^#?[[:space:]]*${key}[[:space:]]" "$SSHD_CONFIG" 2>/dev/null; then
+    sudo sed -i '' "s|^#\?[[:space:]]*${key}[[:space:]].*|${key} ${value}|" "$SSHD_CONFIG"
+  else
+    echo "${key} ${value}" | sudo tee -a "$SSHD_CONFIG" > /dev/null
+  fi
+  echo "[SET]  sshd: $key $value"
 }
 
-# Show status of all components
-show_all_status() {
-    print_header "System Status"
-    
-    # System info
-    print_info "System Information:"
-    echo "  macOS: $(sw_vers -productVersion)"
-    echo "  Architecture: $(uname -m)"
-    echo "  Hostname: $(hostname)"
-    echo "  RAM: $(get_system_ram_gb)GB"
-    echo "  CPUs: $(get_cpu_cores)"
-    echo ""
-    
-    print_separator
-    
-    # Homebrew
-    print_info "Homebrew:"
-    if command_exists brew; then
-        echo "  Status: ✓ Installed"
-        echo "  Path: $(which brew)"
-        echo "  Version: $(brew --version | head -1)"
-    else
-        echo "  Status: ✗ Not installed"
-    fi
-    
-    print_separator
-    
-    # Power Management
-    print_info "Power Management:"
-    local sleep_val=$(pmset -g | grep "^[ ]*sleep" | awk '{print $2}' | head -1)
-    if [ "$sleep_val" = "0" ]; then
-        echo "  Status: ✓ Headless mode (sleep disabled)"
-    else
-        echo "  Status: ⚠ Normal mode (will sleep)"
-    fi
-    
-    print_separator
-    
-    # Ollama
-    print_info "Ollama:"
-    if command_exists ollama; then
-        echo "  Status: ✓ Installed"
-        echo "  Path: $(which ollama)"
-        if process_running ollama; then
-            echo "  Service: ✓ Running"
-            if curl -s --max-time 2 http://localhost:11434/api/tags > /dev/null 2>&1; then
-                echo "  API: ✓ Responding"
-            else
-                echo "  API: ⚠ Not responding"
-            fi
-        else
-            echo "  Service: ✗ Not running"
-        fi
-    else
-        echo "  Status: ✗ Not installed"
-    fi
-    
-    print_separator
-    
-    # Colima
-    print_info "Colima:"
-    if command_exists colima; then
-        echo "  Status: ✓ Installed"
-        if colima status &> /dev/null; then
-            echo "  Service: ✓ Running"
-            if docker info &> /dev/null; then
-                echo "  Docker: ✓ Connected"
-            else
-                echo "  Docker: ✗ Not connected"
-            fi
-        else
-            echo "  Service: ✗ Not running"
-        fi
-    else
-        echo "  Status: ✗ Not installed"
-    fi
-    
-    print_separator
-    
-    # Docker
-    print_info "Docker:"
-    if command_exists docker; then
-        echo "  Status: ✓ Installed"
-        echo "  Version: $(docker --version)"
-    else
-        echo "  Status: ✗ Not installed"
-    fi
-    
-    print_separator
-    
-    print_info "For detailed status, use:"
-    echo "  $0 status <component>"
-    echo "  Components: homebrew, power, ollama, colima"
-}
+set_sshd "PermitRootLogin"      "no"
+set_sshd "PasswordAuthentication" "no"
+set_sshd "PubkeyAuthentication" "yes"
+set_sshd "MaxAuthTries"         "3"
+set_sshd "ClientAliveInterval"  "120"
+set_sshd "ClientAliveCountMax"  "10"
 
-# Remove all components
-remove_all() {
-    print_header "Remove All Components"
-    
-    print_warning "THIS WILL REMOVE ALL COMPONENTS"
-    print_warning "This is a destructive operation!"
-    echo ""
-    print_info "The following will be removed:"
-    echo "  • Colima and Docker (VMs, containers, images)"
-    echo "  • Ollama (service and binary, optionally models)"
-    echo "  • Power management configuration"
-    echo "  • Optionally: Homebrew and all packages"
-    echo ""
-    
-    if ! confirm_action "Are you absolutely sure?"; then
-        print_warning "Operation cancelled"
-        return
-    fi
-    
-    # Double confirm
-    print_warning "This cannot be undone!"
-    if ! confirm_action "Type 'y' again to confirm"; then
-        print_warning "Operation cancelled"
-        return
-    fi
-    
-    # Remove in reverse order
-    
-    # Colima
-    if command_exists colima; then
-        print_separator
-        print_info "Removing Colima..."
-        "$COLIMA_SCRIPT" remove
-    fi
-    
-    # Ollama
-    if command_exists ollama || [ -f "/usr/local/bin/ollama" ]; then
-        print_separator
-        print_info "Removing Ollama..."
-        "$OLLAMA_SCRIPT" remove
-    fi
-    
-    # Power management
-    print_separator
-    print_info "Restoring normal power management..."
-    "$POWER_SCRIPT" remove
-    
-    # Homebrew (optional)
-    if command_exists brew; then
-        print_separator
-        if confirm_action "Remove Homebrew? (This will remove ALL Homebrew packages)"; then
-            "$HOMEBREW_SCRIPT" remove
-        else
-            print_info "Homebrew kept installed"
-        fi
-    fi
-    
-    print_separator
-    print_status "All components removed"
-    print_info "Your Mac has been restored to a clean state"
-}
+# Restart sshd to apply changes
+sudo launchctl stop  com.openssh.sshd 2>/dev/null || true
+sudo launchctl start com.openssh.sshd 2>/dev/null || true
+echo "[SET]  sshd restarted"
 
-# Interactive menu mode
-interactive_mode() {
-    while true; do
-        show_menu
-        read -p "Enter choice [0-15]: " choice
-        echo ""
-        
-        case $choice in
-            1)
-                "$HOMEBREW_SCRIPT" setup
-                ;;
-            2)
-                "$POWER_SCRIPT" setup
-                ;;
-            3)
-                "$OLLAMA_SCRIPT" setup
-                ;;
-            4)
-                "$COLIMA_SCRIPT" setup
-                ;;
-            5)
-                full_setup
-                ;;
-            6)
-                enable_all
-                ;;
-            7)
-                disable_all
-                ;;
-            8)
-                show_all_status
-                ;;
-            9)
-                "$HOMEBREW_SCRIPT" status
-                ;;
-            10)
-                "$POWER_SCRIPT" status
-                ;;
-            11)
-                "$OLLAMA_SCRIPT" status
-                ;;
-            12)
-                "$COLIMA_SCRIPT" status
-                ;;
-            13)
-                "$OLLAMA_SCRIPT" remove
-                ;;
-            14)
-                "$COLIMA_SCRIPT" remove
-                ;;
-            15)
-                remove_all
-                ;;
-            0)
-                print_info "Exiting..."
-                exit 0
-                ;;
-            *)
-                print_error "Invalid choice: $choice"
-                ;;
-        esac
-        
-        echo ""
-        read -p "Press Enter to continue..."
-    done
-}
+echo ""
+echo "========================================"
+echo "Section 5: Xcode Command Line Tools"
+echo "========================================"
+echo ""
 
-# Show CLI usage
-show_cli_usage() {
-    cat << EOF
-Headless Mac Setup - Master Script
+# ---------------------------------------------------------------------------
+# 1.5 Xcode CLT — headless-safe install via softwareupdate
+# ---------------------------------------------------------------------------
+if xcode-select -p &>/dev/null; then
+  echo "[SKIP] Xcode Command Line Tools already installed: $(xcode-select -p)"
+else
+  echo "[INFO] Installing Xcode Command Line Tools (headless method)..."
+  touch /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+  CLT_PROD=$(softwareupdate --list 2>&1 \
+    | grep -B1 "Command Line Tools" \
+    | head -1 \
+    | awk -F'*' '{print $2}' \
+    | sed 's/^ *//' \
+    | tr -d '\n')
+  if [[ -n "$CLT_PROD" ]]; then
+    sudo softwareupdate --install "$CLT_PROD" --verbose
+    echo "[SET]  Xcode Command Line Tools installed"
+  else
+    echo "[WARN] Could not find CLT in softwareupdate list — may require GUI install"
+    echo "       Run: xcode-select --install  (if a display is attached)"
+  fi
+  rm -f /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+fi
 
-Usage: $0 <command> [component]
+echo ""
+echo "========================================"
+echo "Section 6: Application Firewall"
+echo "========================================"
+echo ""
 
-Commands:
-    install <component>    Install/setup a component
-    enable <component>     Enable/start a component
-    disable <component>    Disable/stop a component
-    remove <component>     Remove/uninstall a component
-    status [component]     Show status
-    menu                   Interactive menu mode
-    help                   Show this help message
+# ---------------------------------------------------------------------------
+# 1.6 Application Firewall
+#
+# Default: disabled for headless inference servers — Python-based services
+# (Rapid-MLX, mlx-lm, Infinity) are unsigned and would silently block on a
+# fresh install with no one present to click "Allow".
+#
+# Override: set network.disable_firewall: false in config.json to leave
+# the firewall in its current state (e.g. if this machine is not dedicated
+# to inference or has other firewall policy requirements).
+# ---------------------------------------------------------------------------
+DISABLE_FIREWALL=$(echo "$CONFIG" | jq -r '.network.disable_firewall // true')
+FIREWALL_CMD="/usr/libexec/ApplicationFirewall/socketfilterfw"
 
-Components:
-    all                    All components
-    homebrew               Homebrew package manager
-    power                  Power management
-    ollama                 Ollama LLM service
-    colima                 Colima + Docker
+if [[ "$DISABLE_FIREWALL" == "true" ]]; then
+  CURRENT_FW_STATE=$(sudo "$FIREWALL_CMD" --getglobalstate 2>/dev/null || echo "unknown")
+  if echo "$CURRENT_FW_STATE" | grep -qi "disabled"; then
+    echo "[SKIP] Application Firewall already disabled"
+  else
+    sudo "$FIREWALL_CMD" --setglobalstate off
+    echo "[SET]  Application Firewall disabled"
+    echo "       Reason: unsigned Python inference services require open inbound ports."
+    echo "       Override: set network.disable_firewall: false in config.json"
+  fi
+else
+  echo "[SKIP] Firewall management skipped (network.disable_firewall: false in config)"
+  echo "       Ensure inbound ports are open: 11434 (Ollama) 8000 (Rapid-MLX)"
+  echo "       8080 (mlx-lm) 7997 (Infinity) 52415 (Exo)"
+fi
 
-Examples:
-    $0 install all         # Full setup
-    $0 install ollama      # Install only Ollama
-    $0 enable ollama       # Start Ollama service
-    $0 status              # Show status of all components
-    $0 status ollama       # Show Ollama status only
-    $0 disable all         # Disable all services
-    $0 remove colima       # Remove Colima
-    $0 menu                # Interactive menu
-
-EOF
-}
-
-# Main command dispatcher
-main() {
-    local command="${1:-menu}"
-    local component="${2:-}"
-    
-    # Check macOS
-    if ! check_macos; then
-        exit 1
-    fi
-    
-    case "$command" in
-        install)
-            case "$component" in
-                all)
-                    full_setup
-                    ;;
-                homebrew)
-                    "$HOMEBREW_SCRIPT" setup
-                    ;;
-                power)
-                    "$POWER_SCRIPT" setup
-                    ;;
-                ollama)
-                    "$OLLAMA_SCRIPT" setup
-                    ;;
-                colima)
-                    "$COLIMA_SCRIPT" setup
-                    ;;
-                "")
-                    print_error "No component specified"
-                    echo ""
-                    show_cli_usage
-                    exit 1
-                    ;;
-                *)
-                    print_error "Unknown component: $component"
-                    exit 1
-                    ;;
-            esac
-            ;;
-            
-        enable)
-            case "$component" in
-                all)
-                    enable_all
-                    ;;
-                homebrew)
-                    "$HOMEBREW_SCRIPT" enable
-                    ;;
-                power)
-                    "$POWER_SCRIPT" enable
-                    ;;
-                ollama)
-                    "$OLLAMA_SCRIPT" enable
-                    ;;
-                colima)
-                    "$COLIMA_SCRIPT" enable
-                    ;;
-                "")
-                    print_error "No component specified"
-                    exit 1
-                    ;;
-                *)
-                    print_error "Unknown component: $component"
-                    exit 1
-                    ;;
-            esac
-            ;;
-            
-        disable)
-            case "$component" in
-                all)
-                    disable_all
-                    ;;
-                homebrew)
-                    "$HOMEBREW_SCRIPT" disable
-                    ;;
-                power)
-                    "$POWER_SCRIPT" disable
-                    ;;
-                ollama)
-                    "$OLLAMA_SCRIPT" disable
-                    ;;
-                colima)
-                    "$COLIMA_SCRIPT" disable
-                    ;;
-                "")
-                    print_error "No component specified"
-                    exit 1
-                    ;;
-                *)
-                    print_error "Unknown component: $component"
-                    exit 1
-                    ;;
-            esac
-            ;;
-            
-        remove)
-            case "$component" in
-                all)
-                    remove_all
-                    ;;
-                homebrew)
-                    "$HOMEBREW_SCRIPT" remove
-                    ;;
-                power)
-                    "$POWER_SCRIPT" remove
-                    ;;
-                ollama)
-                    "$OLLAMA_SCRIPT" remove
-                    ;;
-                colima)
-                    "$COLIMA_SCRIPT" remove
-                    ;;
-                "")
-                    print_error "No component specified"
-                    exit 1
-                    ;;
-                *)
-                    print_error "Unknown component: $component"
-                    exit 1
-                    ;;
-            esac
-            ;;
-            
-        status)
-            if [ -z "$component" ]; then
-                show_all_status
-            else
-                case "$component" in
-                    homebrew)
-                        "$HOMEBREW_SCRIPT" status
-                        ;;
-                    power)
-                        "$POWER_SCRIPT" status
-                        ;;
-                    ollama)
-                        "$OLLAMA_SCRIPT" status
-                        ;;
-                    colima)
-                        "$COLIMA_SCRIPT" status
-                        ;;
-                    *)
-                        print_error "Unknown component: $component"
-                        exit 1
-                        ;;
-                esac
-            fi
-            ;;
-            
-        menu)
-            interactive_mode
-            ;;
-            
-        help|--help|-h)
-            show_cli_usage
-            ;;
-            
-        *)
-            print_error "Unknown command: $command"
-            echo ""
-            show_cli_usage
-            exit 1
-            ;;
-    esac
-}
-
-# Run main function
-main "$@"
+echo ""
+echo "========================================"
+echo "setup.sh complete"
+echo "========================================"
+echo ""
+echo "Next step: sudo ./install-tools.sh"
+echo "To verify:  ./verify.sh"
+echo "To undo:    sudo ./restore.sh"
+echo ""
+echo "Log written to: $LOG_FILE"

@@ -136,72 +136,37 @@ get_ollama_config() {
 
 # Install Ollama
 install_ollama() {
-    print_info "Installing Ollama from ollama.com..."
-    
-    # Create temporary directory
-    local tmp_dir=$(mktemp -d)
-    cd "$tmp_dir"
-    
-    print_info "Downloading Ollama installer..."
-    
-    if ! curl -L https://ollama.com/download/Ollama-darwin.zip -o Ollama.zip; then
-        print_error "Failed to download Ollama"
-        rm -rf "$tmp_dir"
+    print_info "Installing Ollama via official CLI installer..."
+
+    # Use the CLI installer — places binary at /usr/local/bin/ollama directly,
+    # which is what the LaunchDaemon plist expects. Avoids the .app bundle which
+    # conflicts with the daemon approach and installs a login item we don't want.
+    if ! curl -fsSL https://ollama.com/install.sh | sh; then
+        print_error "Ollama installer failed"
         exit 1
     fi
-    
-    print_status "Download complete"
-    
-    print_info "Extracting installer..."
-    if ! unzip -q Ollama.zip; then
-        print_error "Failed to extract Ollama"
-        rm -rf "$tmp_dir"
-        exit 1
-    fi
-    
-    print_status "Extraction complete"
-    
-    # Check what we got and install
-    if [ -d "Ollama.app" ]; then
-        print_info "Installing Ollama.app to /Applications..."
-        sudo mv Ollama.app /Applications/
-        
-        sudo mkdir -p /usr/local/bin
-        sudo ln -sf /Applications/Ollama.app/Contents/Resources/ollama /usr/local/bin/ollama
-        
-        OLLAMA_BINARY="/usr/local/bin/ollama"
-        print_status "Ollama installed successfully"
-    elif [ -f "ollama" ]; then
-        print_info "Installing Ollama binary to /usr/local/bin..."
-        sudo mkdir -p /usr/local/bin
-        sudo mv ollama /usr/local/bin/ollama
-        sudo chmod +x /usr/local/bin/ollama
-        
-        OLLAMA_BINARY="/usr/local/bin/ollama"
-        print_status "Ollama installed successfully"
-    else
-        print_error "Unexpected download contents"
-        ls -la
-        rm -rf "$tmp_dir"
-        exit 1
-    fi
-    
-    # Clean up
-    cd ~
-    rm -rf "$tmp_dir"
-    print_status "Cleanup complete"
-    
+
+    OLLAMA_BINARY="/usr/local/bin/ollama"
+
+    # Remove any Ollama login item — it conflicts with the LaunchDaemon
+    osascript -e 'tell application "System Events" to delete login item "Ollama"' \
+        2>/dev/null || true
+    # Also kill any app-based instance that may have auto-launched
+    pkill -f "Ollama.app" 2>/dev/null || true
+    print_status "Ollama login item removed (daemon will manage startup)"
+
     # Verify installation
     if [ -f "$OLLAMA_BINARY" ]; then
         if check_binary_arm64 "$OLLAMA_BINARY"; then
-            local version=$("$OLLAMA_BINARY" --version 2>/dev/null || echo "unknown")
-            print_status "Verified: Ollama $version installed"
+            local version
+            version=$("$OLLAMA_BINARY" --version 2>/dev/null || echo "unknown")
+            print_status "Verified: Ollama $version at $OLLAMA_BINARY"
         else
-            print_error "Installation verification failed"
+            print_error "Installation verification failed — binary may not be ARM64"
             exit 1
         fi
     else
-        print_error "Installation failed - binary not found"
+        print_error "Installation failed — binary not found at $OLLAMA_BINARY"
         exit 1
     fi
 }
@@ -215,6 +180,10 @@ create_launchd_service() {
         backup_file "$PLIST_PATH"
     fi
     
+    # Create log directory with correct ownership
+    sudo mkdir -p /var/log/ollama
+    sudo chown root:wheel /var/log/ollama
+
     # Create the plist file
     sudo tee "$PLIST_PATH" > /dev/null <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -223,27 +192,32 @@ create_launchd_service() {
 <dict>
     <key>Label</key>
     <string>$SERVICE_NAME</string>
-    
+
     <key>ProgramArguments</key>
     <array>
         <string>$OLLAMA_BINARY</string>
         <string>serve</string>
     </array>
-    
+
     <key>RunAtLoad</key>
     <true/>
-    
+
     <key>KeepAlive</key>
     <true/>
-    
+
     <key>StandardOutPath</key>
-    <string>/tmp/ollama.log</string>
-    
+    <string>/var/log/ollama/stdout.log</string>
+
     <key>StandardErrorPath</key>
-    <string>/tmp/ollama.err</string>
-    
+    <string>/var/log/ollama/stderr.log</string>
+
     <key>EnvironmentVariables</key>
     <dict>
+        <!-- HOME is required: Ollama panics with 'panic: \$HOME is not defined' without it -->
+        <key>HOME</key>
+        <string>/var/root</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>OLLAMA_MAX_LOADED_MODELS</key>
         <string>$MAX_MODELS</string>
         <key>OLLAMA_KEEP_ALIVE</key>
@@ -258,16 +232,21 @@ create_launchd_service() {
         <string>1</string>
         <key>OLLAMA_HOST</key>
         <string>$OLLAMA_HOST</string>
+        <key>OLLAMA_ORIGINS</key>
+        <string>*</string>
     </dict>
-    
+
     <key>WorkingDirectory</key>
     <string>/tmp</string>
+
+    <key>UserName</key>
+    <string>root</string>
 </dict>
 </plist>
 EOF
-    
+
     print_status "Launchd plist created"
-    
+
     # Set proper permissions
     sudo chown root:wheel "$PLIST_PATH"
     sudo chmod 644 "$PLIST_PATH"
@@ -353,9 +332,9 @@ show_status() {
     
     # Show logs
     print_info "Logs:"
-    echo "  Output: /tmp/ollama.log"
-    echo "  Errors: /tmp/ollama.err"
-    if [ -f "/tmp/ollama.err" ] && [ -s "/tmp/ollama.err" ]; then
+    echo "  Output: /var/log/ollama/stdout.log"
+    echo "  Errors: /var/log/ollama/stderr.log"
+    if [ -f "/var/log/ollama/stderr.log" ] && [ -s "/var/log/ollama/stderr.log" ]; then
         print_warning "Error log has content - check for issues"
     fi
 }
@@ -436,15 +415,13 @@ setup_ollama() {
     
     print_separator
     
-    # Load and start service
+    # Load and start service (bootstrap/bootout — load/unload deprecated in macOS 15+)
     print_info "Loading Ollama service..."
-    sudo launchctl unload "$PLIST_PATH" 2>/dev/null || true
+    sudo launchctl bootout system "$PLIST_PATH" 2>/dev/null || true
     sleep 1
-    sudo launchctl load "$PLIST_PATH"
+    sudo launchctl bootstrap system "$PLIST_PATH"
     print_status "Service loaded"
-    
-    print_info "Starting Ollama service..."
-    sudo launchctl start "$SERVICE_NAME"
+
     sleep 3
     print_status "Service started"
     
@@ -464,7 +441,7 @@ setup_ollama() {
         fi
     else
         print_error "Ollama failed to start"
-        print_info "Check logs: tail -f /tmp/ollama.err"
+        print_info "Check logs: tail -f /var/log/ollama/stderr.log"
         exit 1
     fi
     
@@ -501,7 +478,7 @@ enable_ollama() {
     # Load service if not loaded
     if ! is_service_loaded; then
         print_info "Loading service..."
-        sudo launchctl load "$PLIST_PATH"
+        sudo launchctl bootstrap system "$PLIST_PATH"
         print_status "Service loaded"
     else
         print_status "Service already loaded"
@@ -564,7 +541,7 @@ disable_ollama() {
     # Unload service
     if is_service_loaded; then
         print_info "Unloading service..."
-        sudo launchctl unload "$PLIST_PATH" 2>/dev/null || true
+        sudo launchctl bootout system "$PLIST_PATH" 2>/dev/null || true
         print_status "Service unloaded"
     else
         print_status "Service not loaded"
@@ -602,8 +579,7 @@ remove_ollama() {
     # Stop and unload service
     if is_ollama_running || is_service_loaded; then
         print_info "Stopping service..."
-        sudo launchctl stop "$SERVICE_NAME" 2>/dev/null || true
-        sudo launchctl unload "$PLIST_PATH" 2>/dev/null || true
+        sudo launchctl bootout system "$PLIST_PATH" 2>/dev/null || true
         pkill ollama 2>/dev/null || true
         sleep 2
         print_status "Service stopped"
@@ -630,7 +606,8 @@ remove_ollama() {
     fi
     
     # Clean up logs
-    rm -f /tmp/ollama.log /tmp/ollama.err
+    sudo rm -f /var/log/ollama/stdout.log /var/log/ollama/stderr.log
+    sudo rmdir /var/log/ollama 2>/dev/null || true
     print_status "Logs removed"
     
     # Remove config

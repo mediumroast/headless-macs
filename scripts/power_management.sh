@@ -30,7 +30,20 @@ SETTINGS_FILE="$HOME/.headless-mac-pmset-backup.txt"
 # Function to get current pmset value
 get_pmset_value() {
     local setting=$1
-    pmset -g | grep "$setting" | awk '{print $2}' | head -1
+    pmset -g | awk -v s="$setting" '$1==s{print $2}' | head -1
+}
+
+# Apply a pmset setting only if the current value differs (idempotent)
+pmset_apply() {
+    local key=$1 value=$2
+    local current
+    current=$(get_pmset_value "$key")
+    if [ "$current" = "$value" ]; then
+        print_info "pmset $key already $value — skipping"
+    else
+        sudo pmset -a "$key" "$value"
+        print_status "pmset $key set to $value (was: ${current:-unset})"
+    fi
 }
 
 # Function to store current settings as backup
@@ -66,49 +79,18 @@ EOF
 # Apply headless power management settings
 apply_headless_settings() {
     print_info "Applying headless power management settings..."
-    
-    # Disable sleep entirely
-    sudo pmset -a sleep $HEADLESS_SLEEP
-    print_status "Sleep disabled"
-    
-    sudo pmset -a disablesleep $HEADLESS_DISABLESLEEP
-    print_status "Sleep disable flag set"
-    
-    # Disable disk sleep
-    sudo pmset -a disksleep $HEADLESS_DISKSLEEP
-    print_status "Disk sleep disabled"
-    
-    # Disable standby
-    sudo pmset -a standby $HEADLESS_STANDBY
-    print_status "Standby mode disabled"
-    
-    # Disable autopoweroff
-    sudo pmset -a autopoweroff $HEADLESS_AUTOPOWEROFF
-    print_status "Auto power off disabled"
-    
-    # Disable powernap
-    sudo pmset -a powernap $HEADLESS_POWERNAP
-    print_status "Power nap disabled"
-    
-    # Disable autorestart
-    sudo pmset -a autorestart $HEADLESS_AUTORESTART
-    print_status "Auto restart on power failure disabled"
-    
-    # Keep network alive
-    sudo pmset -a networkoversleep $HEADLESS_NETWORKOVERSLEEP
-    print_status "Network over sleep disabled (not needed since sleep is off)"
-    
-    # Wake on magic packet
-    sudo pmset -a womp $HEADLESS_WOMP
-    print_status "Wake on magic packet enabled"
-    
-    # Display sleep (saves power, doesn't affect headless operation)
-    sudo pmset -a displaysleep $HEADLESS_DISPLAYSLEEP
-    print_status "Display sleep set to $HEADLESS_DISPLAYSLEEP minutes"
-    
-    # TCP keep alive
-    sudo pmset -a tcpkeepalive $HEADLESS_TCPKEEPALIVE
-    print_status "TCP keep alive enabled"
+
+    pmset_apply sleep            $HEADLESS_SLEEP
+    pmset_apply disablesleep     $HEADLESS_DISABLESLEEP
+    pmset_apply disksleep        $HEADLESS_DISKSLEEP
+    pmset_apply standby          $HEADLESS_STANDBY
+    pmset_apply autopoweroff     $HEADLESS_AUTOPOWEROFF
+    pmset_apply powernap         $HEADLESS_POWERNAP
+    pmset_apply autorestart      $HEADLESS_AUTORESTART
+    pmset_apply networkoversleep $HEADLESS_NETWORKOVERSLEEP
+    pmset_apply womp             $HEADLESS_WOMP
+    pmset_apply displaysleep     $HEADLESS_DISPLAYSLEEP
+    pmset_apply tcpkeepalive     $HEADLESS_TCPKEEPALIVE
 }
 
 # Restore default/conservative power settings
@@ -119,36 +101,35 @@ apply_default_settings() {
     if [ -f "$SETTINGS_FILE" ]; then
         print_info "Found backup settings, restoring original values..."
         source "$SETTINGS_FILE"
-        
-        sudo pmset -a sleep ${sleep:-10}
-        sudo pmset -a disablesleep 0
-        sudo pmset -a disksleep ${disksleep:-10}
-        sudo pmset -a standby ${standby:-1}
-        sudo pmset -a autopoweroff ${autopoweroff:-1}
-        sudo pmset -a powernap ${powernap:-0}
-        sudo pmset -a autorestart ${autorestart:-0}
-        sudo pmset -a networkoversleep ${networkoversleep:-0}
-        sudo pmset -a womp ${womp:-0}
-        sudo pmset -a displaysleep ${displaysleep:-10}
-        sudo pmset -a tcpkeepalive ${tcpkeepalive:-1}
-        
+
+        pmset_apply sleep            ${sleep:-10}
+        pmset_apply disablesleep     0
+        pmset_apply disksleep        ${disksleep:-10}
+        pmset_apply standby          ${standby:-1}
+        pmset_apply autopoweroff     ${autopoweroff:-1}
+        pmset_apply powernap         ${powernap:-0}
+        pmset_apply autorestart      ${autorestart:-0}
+        pmset_apply networkoversleep ${networkoversleep:-0}
+        pmset_apply womp             ${womp:-0}
+        pmset_apply displaysleep     ${displaysleep:-10}
+        pmset_apply tcpkeepalive     ${tcpkeepalive:-1}
+
         print_status "Original settings restored"
     else
         print_warning "No backup found, applying conservative defaults..."
-        
-        # Apply reasonable defaults for a normal Mac
-        sudo pmset -a sleep 10
-        sudo pmset -a disablesleep 0
-        sudo pmset -a disksleep 10
-        sudo pmset -a standby 1
-        sudo pmset -a autopoweroff 1
-        sudo pmset -a powernap 0
-        sudo pmset -a autorestart 0
-        sudo pmset -a networkoversleep 0
-        sudo pmset -a womp 0
-        sudo pmset -a displaysleep 10
-        sudo pmset -a tcpkeepalive 1
-        
+
+        pmset_apply sleep            10
+        pmset_apply disablesleep     0
+        pmset_apply disksleep        10
+        pmset_apply standby          1
+        pmset_apply autopoweroff     1
+        pmset_apply powernap         0
+        pmset_apply autorestart      0
+        pmset_apply networkoversleep 0
+        pmset_apply womp             0
+        pmset_apply displaysleep     10
+        pmset_apply tcpkeepalive     1
+
         print_status "Default settings applied"
     fi
 }

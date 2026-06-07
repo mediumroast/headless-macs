@@ -1,329 +1,293 @@
-# Headless Mac Setup Scripts
+# Mac LLM Optimizer
 
-Modular setup scripts for configuring macOS (especially Mac Mini) for 24/7 headless operation with Ollama LLM inference and containerized workloads.
+Configure an Apple Silicon Mac as a production-grade LLM inference node. Idempotent bash scripts that set up power management, network tuning, service suppression, and one or more serving tools — all driven by a single `config.json`.
 
-## Features
+**Supported tools:** Ollama · Rapid-MLX · mlx-lm · Infinity · Exo
 
-- 🔧 **Modular Architecture**: Each component (Homebrew, Power Management, Ollama, Colima) is independent
-- 🎯 **Consistent Interface**: All scripts support `setup`, `enable`, `disable`, `remove`, and `status` commands
-- 🤖 **Ollama-Aware**: Colima intelligently allocates resources when Ollama is running
-- 🚀 **Auto-Start**: Services configured to start automatically on boot
-- 💻 **Apple Silicon Optimized**: Native ARM64 support with architecture verification
-- 🔐 **Safe Operations**: Backup configs before changes, confirmation prompts
+**Requires:** Apple Silicon (M1 or later) · macOS 15 Sequoia or 26 Tahoe · Homebrew
+
+---
 
 ## Quick Start
 
 ```bash
-# Clone the repository
+# 1. Clone
 git clone https://github.com/miha42-github/headless-macs.git
 cd headless-macs
 
-# Make scripts executable
-chmod +x setup.sh lib/common.sh scripts/*.sh
+# 2. Make scripts executable
+chmod +x *.sh scripts/*.sh
 
-# Full setup (interactive)
-./setup.sh install all
+# 3. Audit your system — read-only, no changes, no sudo
+./precheck.sh
 
-# Or use the interactive menu
-./setup.sh menu
+# 4. Review precheck output. If you want an external volume for model storage:
+#    Edit config.json → set storage.use_external_volume: true
+#    Then run (requires sudo):
+sudo ./storage-volume.sh
 
-# Check status
-./setup.sh status
+# 5. Edit config.json to enable/configure your tools (Ollama is on by default)
+
+# 6. Apply system baseline — pmset, network tuning, service suppression, SSH
+sudo ./setup.sh
+
+# 7. Install and start serving tools
+sudo ./install-tools.sh
+
+# 8. Verify everything is healthy
+./verify.sh
 ```
 
-## Components
+---
 
-### 1. Power Management
-Configures macOS power settings for 24/7 operation without sleep.
+## Tool Selection
 
-```bash
-./scripts/power_management.sh setup      # Configure for headless operation
-./scripts/power_management.sh enable     # Apply headless settings
-./scripts/power_management.sh disable    # Restore normal power settings
-./scripts/power_management.sh status     # Show current settings
-./scripts/power_management.sh remove     # Restore defaults and cleanup
+| Tool | Best For | Port | Notes |
+|---|---|---|---|
+| **Ollama** | General inference, easy model management | 11434 | Enabled by default. `ollama pull` registry. |
+| **Rapid-MLX** | Coding agents (Claude Code, Cursor, Aider) | 8000 | 2–4.2× faster than Ollama; 17 tool-call parsers; `rapid-mlx doctor` diagnostic. Beta. |
+| **mlx-lm** | Custom HuggingFace models not in Rapid-MLX | 8080 | Use when you need a specific HF path. |
+| **Infinity** | Embeddings + reranking for RAG pipelines | 7997 | MPS-accelerated. OpenAI-compatible `/v1/embeddings` and `/v1/rerank`. |
+| **Exo** | Multi-Mac distributed inference | 52415 | Pools unified memory across devices. Requires auto-login. |
+
+Enable tools in `config.json`:
+
+```json
+{
+  "tools": {
+    "ollama":    { "enabled": true  },
+    "rapid_mlx": { "enabled": false },
+    "mlx_lm":   { "enabled": false },
+    "infinity":  { "enabled": false },
+    "exo":       { "enabled": false }
+  }
+}
 ```
 
-**What it does:**
-- Disables system sleep
-- Disables disk sleep
-- Enables Wake-on-LAN
-- Allows display sleep (saves power)
-- Backs up original settings
+See [`docs/tool-comparison.md`](docs/tool-comparison.md) for a full comparison.
 
-### 2. Homebrew
-Installs and manages Homebrew package manager.
+---
 
-```bash
-./scripts/homebrew_setup.sh setup        # Install Homebrew
-./scripts/homebrew_setup.sh enable       # Add to PATH
-./scripts/homebrew_setup.sh disable      # Remove from PATH
-./scripts/homebrew_setup.sh status       # Show installation status
-./scripts/homebrew_setup.sh remove       # Uninstall Homebrew
-```
+## Hardware RAM Reference
 
-**What it does:**
-- Detects correct architecture (ARM64/Intel)
-- Warns if using wrong Homebrew version
-- Adds to shell PATH
-- Updates Homebrew
+| Mac Model | RAM | Recommended Config |
+|---|---|---|
+| MacBook Air M3 | 16 GB | 7B Q8 · 1 model at a time |
+| MacBook Air M3 | 24 GB | 13B Q8 or 7B Q8 + embeddings |
+| MacBook Pro M4 | 32 GB | 32B Q4 or 13B Q8 · 2 models |
+| Mac Mini M4 | 64 GB | 70B Q4 or 32B Q5 · 3 models |
+| Mac Studio M4 Ultra | 192 GB | 405B Q4 · multiple large models |
 
-### 3. Ollama
-Installs Ollama and configures it as a system service for LLM inference.
+`install-tools.sh` automatically tunes Ollama's `MAX_LOADED_MODELS`, `NUM_PARALLEL`, and `MAX_CONTEXT` based on detected RAM. See [`docs/ram-sizing.md`](docs/ram-sizing.md).
 
-```bash
-./scripts/ollama_setup.sh setup          # Install and configure Ollama
-./scripts/ollama_setup.sh enable         # Start Ollama service
-./scripts/ollama_setup.sh disable        # Stop Ollama service
-./scripts/ollama_setup.sh status         # Show service status
-./scripts/ollama_setup.sh remove         # Uninstall Ollama
-```
-
-**What it does:**
-- Installs Ollama (verifies ARM64)
-- Creates launchd service for auto-start
-- Configures environment variables:
-  - `OLLAMA_MAX_LOADED_MODELS` (default: 3)
-  - `OLLAMA_KEEP_ALIVE` (default: 24 hours)
-  - `OLLAMA_NUM_PARALLEL` (default: 4)
-  - `OLLAMA_MAX_CONTEXT` (default: 32768)
-  - `OLLAMA_HOST` (default: 0.0.0.0:11434)
-- Verifies API endpoint
-- Auto-starts on boot
-
-**Next steps after setup:**
-```bash
-# Pull a model
-ollama pull qwen2.5-coder:7b
-
-# Test inference
-ollama run qwen2.5-coder:7b "write hello world in python"
-
-# List models
-ollama list
-```
-
-### 4. Colima + Docker
-Installs Colima (lightweight Docker alternative) with intelligent resource allocation.
-
-```bash
-./scripts/colima_setup.sh setup          # Install and configure Colima
-./scripts/colima_setup.sh enable         # Start Colima
-./scripts/colima_setup.sh disable        # Stop Colima
-./scripts/colima_setup.sh status         # Show Colima status
-./scripts/colima_setup.sh remove         # Remove Colima and VM
-```
-
-**What it does:**
-- Installs Colima, Docker CLI, Docker Compose, Docker Buildx
-- **Ollama-Aware Resource Allocation:**
-  - Detects if Ollama is running
-  - Calculates available RAM (Total - Ollama - System)
-  - Recommends appropriate CPU/RAM allocation
-- Configures for Apple Silicon:
-  - Uses VZ virtualization
-  - Enables Rosetta for x86_64 containers
-  - Uses virtiofs for fast file mounts
-  - Enables network-address for host communication
-- Creates launchd service for auto-start
-- Tests with hello-world container
-
-**Container-to-Ollama connectivity:**
-```bash
-# Containers can reach host Ollama at:
-# http://host.docker.internal:11434
-
-# Example docker-compose.yml
-services:
-  app:
-    image: myapp
-    environment:
-      - OLLAMA_BASE_URL=http://host.docker.internal:11434
-```
-
-## Master Script
-
-The `setup.sh` master script orchestrates all components:
-
-```bash
-# Interactive menu
-./setup.sh menu
-
-# CLI commands
-./setup.sh install all              # Full setup
-./setup.sh install ollama           # Install only Ollama
-./setup.sh enable all               # Start all services
-./setup.sh disable all              # Stop all services
-./setup.sh status                   # Show status of all components
-./setup.sh status ollama            # Show Ollama status only
-./setup.sh remove ollama            # Remove Ollama
-./setup.sh remove all               # Remove everything
-```
+---
 
 ## File Structure
 
 ```
 headless-macs/
-├── setup.sh                        # Master orchestration script
+├── config.json            # All tuning parameters — edit this first
+├── precheck.sh            # Read-only system audit — run first, no sudo
+├── setup.sh               # System baseline: pmset, sysctl, services, SSH
+├── install-tools.sh       # Serving stack: Ollama, Rapid-MLX, mlx-lm, Infinity, Exo
+├── storage-volume.sh      # External volume setup and symlink wiring
+├── verify.sh              # Health check report — run any time
+├── restore.sh             # Undo all changes made by setup.sh
+├── manage.sh              # Component orchestrator (Homebrew, Colima, legacy ops)
 ├── lib/
-│   └── common.sh                   # Shared utility functions
+│   └── common.sh          # Shared utility functions
 ├── scripts/
-│   ├── power_management.sh         # Power management
-│   ├── homebrew_setup.sh           # Homebrew installation
-│   ├── ollama_setup.sh             # Ollama setup
-│   └── colima_setup.sh             # Colima + Docker
-├── pmset_to_ollama.sh             # [DEPRECATED] Original script
-├── setup_colima.sh                # [DEPRECATED] Original script
-├── PLANNING.md                     # Refactoring plan
-└── README.md                       # This file
+│   ├── power_management.sh
+│   ├── homebrew_setup.sh
+│   ├── ollama_setup.sh
+│   └── colima_setup.sh
+├── docs/
+│   ├── tool-comparison.md  # Ollama vs Rapid-MLX vs mlx-lm vs Infinity vs Exo
+│   ├── ram-sizing.md       # Model size × quantisation × RAM reference
+│   ├── storage-guide.md    # External volume: APFS, fstab, symlink map
+│   └── known-issues.md     # Workarounds for common problems
+├── pmset_to_ollama.sh     # [DEPRECATED]
+└── setup_colima.sh        # [DEPRECATED]
 ```
-
-## Requirements
-
-- macOS (tested on macOS 26 Tahoe)
-- Apple Silicon recommended (M1/M2/M3/M4)
-- Administrator access (for system-level configurations)
-- Internet connection (for downloads)
-
-## Configuration Files
-
-Scripts save configuration to your home directory:
-
-- `~/.headless-mac-pmset-backup.txt` - Original power settings backup
-- `~/.headless-mac-ollama-config` - Ollama configuration
-- `~/.headless-mac-colima-config` - Colima configuration
-
-## Log Files
-
-Service logs are written to `/tmp/`:
-
-- `/tmp/ollama.log` - Ollama stdout
-- `/tmp/ollama.err` - Ollama stderr
-- `/tmp/colima.log` - Colima stdout
-- `/tmp/colima.err` - Colima stderr
-
-## Launchd Services
-
-Auto-start services are configured via launchd:
-
-- `/Library/LaunchDaemons/com.ollama.server.plist` - Ollama (system-level)
-- `~/Library/LaunchAgents/com.colima.plist` - Colima (user-level)
-
-## Use Cases
-
-### 1. LLM Inference Server
-```bash
-./setup.sh install all
-ollama pull qwen2.5-coder:32b
-# Server ready for 24/7 LLM inference
-```
-
-### 2. Development with Containers + LLM
-```bash
-./setup.sh install all
-# Run containers that can access host Ollama
-docker run -e OLLAMA_BASE_URL=http://host.docker.internal:11434 myapp
-```
-
-### 3. Headless Operation Only
-```bash
-./scripts/power_management.sh setup
-./scripts/ollama_setup.sh setup
-# No containers needed
-```
-
-## Troubleshooting
-
-### Ollama not accessible from containers
-```bash
-# Verify Ollama is running
-./scripts/ollama_setup.sh status
-
-# Verify Colima has network-address enabled
-colima status
-
-# Test from container
-docker run --rm curlimages/curl http://host.docker.internal:11434/api/tags
-```
-
-### Services not auto-starting after reboot
-```bash
-# Check launchd status
-sudo launchctl list | grep ollama
-launchctl list | grep colima
-
-# Reload services
-./scripts/ollama_setup.sh enable
-./scripts/colima_setup.sh enable
-```
-
-### Power settings not persisting
-```bash
-# Verify settings
-pmset -g
-
-# Reapply
-./scripts/power_management.sh enable
-
-# Check for conflicting settings
-sudo pmset -g custom
-```
-
-## Resource Recommendations
-
-### Mac Mini M4 (16GB RAM)
-```
-Ollama: 8GB (for 7B-13B models)
-Colima: 6GB
-System: 2GB
-```
-
-### Mac Mini M4 (24GB RAM)
-```
-Ollama: 12GB (for 13B-32B models)
-Colima: 10GB
-System: 2GB
-```
-
-### Mac Mini M4 Pro (64GB RAM)
-```
-Ollama: 40GB (for 70B+ models)
-Colima: 20GB
-System: 4GB
-```
-
-## Comparison with Original Scripts
-
-### Old (Deprecated)
-- ❌ Monolithic scripts
-- ❌ No enable/disable/remove functions
-- ❌ No Ollama awareness in Colima
-- ❌ Manual configuration required
-
-### New (Current)
-- ✅ Modular components
-- ✅ Consistent interface (setup/enable/disable/remove/status)
-- ✅ Colima aware of Ollama resources
-- ✅ Master orchestration script
-- ✅ Interactive menu mode
-- ✅ Configuration persistence
-- ✅ Safe operations with backups
-
-## Contributing
-
-Pull requests welcome! Please ensure:
-- All scripts follow the common interface pattern
-- Functions are well-documented
-- Changes are tested on Apple Silicon
-
-## License
-
-See [LICENSE](LICENSE) file.
-
-## Acknowledgments
-
-Built for Mac Mini M4 headless operation with Ollama and containerized workloads.
 
 ---
 
-**Note**: The old scripts (`pmset_to_ollama.sh` and `setup_colima.sh`) are deprecated but remain for backward compatibility. Please migrate to the new modular scripts.
+## Script Reference
+
+### `precheck.sh` — System Audit
+
+No sudo. No changes. Run this first on any new machine.
+
+```bash
+./precheck.sh
+```
+
+Checks: hardware identity · RAM capability · macOS version · SIP · FileVault · auto-login · Xcode CLT · Homebrew · Python · port availability · storage · current pmset state
+
+Writes `/tmp/mac-llm-precheck.json` for downstream scripts.
+
+Exit codes: `0` = ready · `1` = blockers · `2` = warnings only
+
+---
+
+### `setup.sh` — System Baseline
+
+Requires sudo. Idempotent — safe to run multiple times.
+
+```bash
+sudo ./setup.sh
+```
+
+- Power management: all pmset settings, caffeinate LaunchDaemon, MacBook clamshell warning
+- Network: TCP buffer sizes via `/etc/sysctl.conf`
+- Service suppression: Spotlight, telemetry, Siri, iCloud, Biome (SIP-gated)
+- UI: AirDrop, App Nap, animations, notifications, software update, Time Machine
+- SSH: enables Remote Login, hardens `sshd_config`
+- Xcode CLT: headless install via `softwareupdate`
+
+Re-run after any macOS update to restore pmset settings.
+
+---
+
+### `storage-volume.sh` — External Volume Setup
+
+Requires sudo. Only runs if `storage.use_external_volume: true` in `config.json`.
+
+```bash
+sudo ./storage-volume.sh
+```
+
+- Detects volume by label (from precheck cache or live diskutil)
+- Validates filesystem (rejects ExFAT/FAT32/NTFS)
+- Creates directory layout: `ollama/`, `rapid-mlx/`, `mlx-lm/`, `infinity/`, `exo/`, `gguf/`
+- Excludes volume from Spotlight
+- Wires `/Library` symlinks so `install-tools.sh` needs no changes
+- Adds fstab entry for boot-time auto-mount
+
+See [`docs/storage-guide.md`](docs/storage-guide.md).
+
+---
+
+### `install-tools.sh` — Tool Installation
+
+Requires sudo. Each tool is gated by its `enabled` flag in `config.json`.
+
+```bash
+sudo ./install-tools.sh
+```
+
+Ollama is the only tool enabled by default. Enable others in `config.json` before running.
+
+**Log locations:**
+
+| Tool | Stdout | Stderr |
+|---|---|---|
+| Ollama | `/var/log/ollama/stdout.log` | `/var/log/ollama/stderr.log` |
+| Rapid-MLX | `/var/log/rapid-mlx/stdout.log` | `/var/log/rapid-mlx/stderr.log` |
+| mlx-lm | `/var/log/mlx-lm/stdout.log` | `/var/log/mlx-lm/stderr.log` |
+| Infinity | `/var/log/infinity/stdout.log` | `/var/log/infinity/stderr.log` |
+| Exo | `/tmp/exo-stdout.log` | `/tmp/exo-stderr.log` |
+
+---
+
+### `verify.sh` — Health Check
+
+No changes made. Exit `0` = all clear · `1` = failures · `2` = warnings only.
+
+```bash
+./verify.sh
+```
+
+Checks: pmset values · caffeinate daemon · Spotlight · SSH · sysctl · per-tool daemon state · API endpoints · model count · memory pressure
+
+---
+
+### `restore.sh` — Undo All Changes
+
+Requires sudo. Reverses everything `setup.sh` and `install-tools.sh` did.
+
+```bash
+sudo ./restore.sh
+```
+
+- Removes all LaunchDaemon and LaunchAgent plists
+- Restores pmset to safe defaults
+- Re-enables suppressed services from the pre-change snapshot
+- Restores Spotlight, `sshd_config`, `defaults` changes, `sysctl.conf` entries
+
+Prompts for confirmation before making changes. Recommends a reboot when done.
+
+---
+
+## After Installation
+
+### Pull your first Ollama model
+
+```bash
+# Check what models suit your hardware
+./precheck.sh | grep -A10 "MODEL CAPABILITY"
+
+# Pull a model
+ollama pull qwen2.5-coder:7b-instruct-q8_0
+
+# Test inference
+ollama run qwen2.5-coder:7b-instruct-q8_0 "write hello world in python"
+
+# Verify the stack
+./verify.sh
+```
+
+### Point a coding agent at Ollama
+
+```
+Base URL: http://<mac-ip>:11434/v1
+API Key:  (any string — Ollama ignores it)
+Model:    qwen2.5-coder:7b-instruct-q8_0
+```
+
+### Run containers alongside Ollama (Colima)
+
+```bash
+./manage.sh install colima
+
+# Containers can reach host Ollama at:
+# http://host.docker.internal:11434
+docker run -e OLLAMA_BASE_URL=http://host.docker.internal:11434 myapp
+```
+
+---
+
+## Troubleshooting
+
+**Machine sleeps despite setup.sh**
+```bash
+pmset -g | grep -E "sleep|disablesleep|powermode"
+sudo ./setup.sh   # idempotent — safe to re-run
+```
+
+**Ollama daemon not starting**
+```bash
+sudo launchctl print system/com.ollama.server
+tail -50 /var/log/ollama/stderr.log
+```
+
+**Something went wrong — clean slate**
+```bash
+sudo ./restore.sh
+# then reboot
+```
+
+See [`docs/known-issues.md`](docs/known-issues.md) for a full workarounds table.
+
+---
+
+## Contributing
+
+Pull requests welcome. Please ensure:
+- All scripts pass `bash -n <script>` (syntax check)
+- Changes are idempotent — running twice produces `[SKIP]` for already-applied settings
+- New tool plists include `HOME=/var/root`, `UserName root`, and use `bootstrap`/`bootout`
+
+## License
+
+See [LICENSE](LICENSE).

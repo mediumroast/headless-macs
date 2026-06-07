@@ -1,0 +1,69 @@
+{
+  "tools": {
+    "ollama": {
+      "enabled": true,
+      "host": "0.0.0.0:11434",
+      "models_dir": "/Library/Ollama/models",
+      "keep_alive": 86400,
+      "num_parallel": 4,
+      "max_loaded_models": 3,
+      "max_context": 32768,
+      "flash_attention": true,
+      "gpu_percent": 80
+    },
+    "rapid_mlx": {
+      "enabled": false,
+      "host": "0.0.0.0",
+      "port": 8000,
+      "model": "qwen3.5-4b",
+      "prefill_step_size": 8192,
+      "no_thinking": false,
+      "extras": []
+    },
+    "mlx_lm": {
+      "enabled": false,
+      "host": "0.0.0.0",
+      "port": 8080,
+      "model_path": "/Library/MLX/models",
+      "default_model": ""
+    },
+    "infinity": {
+      "enabled": false,
+      "host": "0.0.0.0",
+      "port": 7997,
+      "model": "michaelfeil/bge-small-en-v1.5",
+      "engine": "torch"
+    },
+    "exo": {
+      "enabled": false,
+      "discovery_module": "tailscale",
+      "chatgpt_api_port": 52415
+    }
+  },
+  "storage": {
+    "use_external_volume": false,
+    "volume_label": "LLMStorage",
+    "volume_mount_point": "",
+    "models_subdir": "models",
+    "auto_detect_volume": true,
+    "min_free_gb": 100,
+    "symlink_internal_paths": true
+  },
+  "system": {
+    "disable_spotlight": true,
+    "disable_software_update": true,
+    "disable_time_machine": true,
+    "disable_icloud": true,
+    "disable_airdrop_handoff": true,
+    "disable_notifications": true,
+    "disable_telemetry": true,
+    "disable_siri": true,
+    "disable_media_services": true,
+    "network_tuning": true,
+    "power_mode": 2
+  },
+  "network": {
+    "localhost_only": false,
+    "disable_firewall": true
+  }
+}

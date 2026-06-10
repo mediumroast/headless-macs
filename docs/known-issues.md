@@ -87,6 +87,23 @@
 
 ---
 
+## Client Tooling
+
+> **Note on Roo Code → Zoo Code:** Roo Code (3M installs) shut down in April 2026 when
+> the team archived the project to focus on Roomote. The community forked it as
+> **Zoo Code** (Apache 2.0, same codebase, same settings structure) which launched on the
+> VS Code Marketplace May 16, 2026. All references in this repo use Zoo Code.
+> Existing Roo Code configs export and import directly. GitHub: [Zoo-Code-Org/Zoo-Code](https://github.com/Zoo-Code-Org/Zoo-Code)
+
+| Issue | Affects | Symptom | Fix |
+|---|---|---|---|
+| **VS Code Copilot agent mode tool call loop** | VS Code + local GGUF via Ollama | Model repeatedly issues same 4–5 tool calls, receives `isError` results, retries indefinitely. No error surfaced to user. | Use **Zoo Code** instead of VS Code Copilot agent mode. Zoo Code implements its own agent loop, bypasses VS Code's Copilot orchestration layer, and speaks directly to Ollama's OpenAI-compatible endpoint. Root cause: microsoft/vscode-copilot-chat #3566 — Ollama models not correctly identified as supporting tool calls; tools field stripped from requests. |
+| **VS Code connection leak (Remote-SSH + Ollama tunnel)** | VS Code on a remote machine connecting to Ollama via SSH tunnel | TCP connection count climbs: 58 → 136 → 236 → 486 over 30 minutes. After ~5 minutes with a saturated pool, requests silently fail with no error shown. | On the remote (Linux) host, apply aggressive TCP keepalive: `sudo sysctl -w net.ipv4.tcp_keepalive_time=60 net.ipv4.tcp_keepalive_intvl=10 net.ipv4.tcp_keepalive_probes=3 net.ipv4.tcp_fin_timeout=15 net.ipv4.tcp_tw_reuse=1` — persist to `/etc/sysctl.conf`. Stabilises at ~162 connections. Also set `"opilot.localModelRefreshInterval": 300` in VS Code settings. |
+| **MLX models ignore Modelfile `num_ctx`** | Rapid-MLX, mlx-lm | Setting `num_ctx` in a Modelfile has no effect on MLX-quantised models. Client sees wrong context window. | Context window is fixed at MLX conversion time. To change it, reconvert the model with the desired `--max-position-embeddings`. Use GGUF + Ollama when `num_ctx` control is required. |
+| **Ollama UI context window does not update client metadata** | All Ollama clients | Setting context window in Ollama UI shows correct value in Ollama but client (VS Code, Zoo Code) still sends requests sized to the model card default. | Use a Modelfile with `PARAMETER num_ctx` set explicitly. This is the only mechanism that bakes `num_ctx` into the model metadata that clients read. See `docs/modelfile-guide.md`. |
+
+---
+
 ## M4-Specific
 
 | Issue | Affects | Symptom | Fix |

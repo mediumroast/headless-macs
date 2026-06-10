@@ -49,20 +49,23 @@
 **Strengths**
 - Easiest model management — `ollama pull`, `ollama list`, `ollama run`
 - Large model registry with quantised variants
-- Metal-accelerated on Apple Silicon (MLX backend in preview as of March 2026)
+- MLX backend on Apple Silicon since Ollama 0.19 (March 2026) — narrows speed gap with pure MLX tools
+- Modelfile system bakes `num_ctx` and sampling parameters into model metadata — the only
+  way clients see the correct context window (see `docs/modelfile-guide.md`)
 - Most mature and widely tested option
-- Works well as a fallback while Rapid-MLX is in beta
 
 **Weaknesses**
-- Slower generation than Rapid-MLX or raw mlx-lm on the same hardware
-- No prompt caching for hybrid RNN-attention architectures (DeltaNet models)
-- Basic tool-call support — no auto-recovery on malformed output
+- VS Code Copilot agent mode is broken for local GGUF models — tool call loop bug
+  (microsoft/vscode-copilot-chat #3566). Use Zoo Code for agentic tasks.
+- Basic tool-call support — no auto-recovery on malformed output (mitigated by Modelfile tuning)
+- `num_ctx` must be set via Modelfile, not the UI — Ollama UI override does not update
+  the metadata that clients read
 
 **When to choose Ollama**
 - You want to get started quickly
-- You need to manage many different models
-- You're running general-purpose workloads (not a dedicated coding agent)
-- You want a stable, well-documented option
+- You need to manage many different models via a registry
+- You're serving GGUF models with controlled context windows (Modelfile required)
+- You're running general-purpose workloads with Zoo Code or Opilot as the client
 
 ---
 
@@ -70,7 +73,9 @@
 
 Rapid-MLX is a production-grade MLX-based inference server built specifically for Apple Silicon. It reimplements the serving stack with continuous batching, optimised prefill chunking, DeltaNet state snapshots, 17 tool-call format parsers with auto-recovery, and reasoning/content separation for Qwen3 and DeepSeek-R1.
 
-**Benchmarked at 2–4.2× faster than Ollama** on the same hardware.
+**Previously benchmarked at 2–4.2× faster than Ollama.** Since Ollama 0.19 adopted the MLX
+backend on Apple Silicon (March 2026), the raw generation speed gap has narrowed to ~15–30%.
+Rapid-MLX retains meaningful advantages in serving sophistication over Ollama 0.19.
 
 **Strengths**
 - Fastest generation on Apple Silicon
@@ -115,6 +120,10 @@ Apple's own ML framework serving layer. Provides an OpenAI-compatible HTTP serve
 - You need a specific HuggingFace model not aliased in Rapid-MLX
 - You want minimal dependencies
 - You're experimenting with Apple's MLX framework directly
+
+**Important:** MLX models do not respect Modelfile `num_ctx`. The context window is fixed
+at model conversion time. If clients need to see a specific context window via model
+metadata, use GGUF + Ollama instead.
 
 ---
 

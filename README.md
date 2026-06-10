@@ -101,9 +101,14 @@ headless-macs/
 │   ├── homebrew_setup.sh
 │   ├── ollama_setup.sh
 │   └── colima_setup.sh
+├── modelfiles/
+│   ├── qwen3-coder-next-256k-agent.modelfile  # Agent variant: low temp, tool rules
+│   ├── qwen3-coder-next-256k.modelfile        # Chat variant: higher temp
+│   └── qwen3-coder-next-128k.modelfile        # Reduced context for memory headroom
 ├── docs/
+│   ├── modelfile-guide.md  # Modelfile system, parameter rationale, ollama create workflow
 │   ├── tool-comparison.md  # Ollama vs Rapid-MLX vs mlx-lm vs Infinity vs Exo
-│   ├── ram-sizing.md       # Model size × quantisation × RAM reference
+│   ├── ram-sizing.md       # Model size × quantisation × RAM + KV cache reference
 │   ├── storage-guide.md    # External volume: APFS, fstab, symlink map
 │   └── known-issues.md     # Workarounds for common problems
 ├── pmset_to_ollama.sh     # [DEPRECATED]
@@ -237,13 +242,36 @@ ollama run qwen2.5-coder:7b-instruct-q8_0 "write hello world in python"
 ./verify.sh
 ```
 
+### Register production Modelfiles
+
+Modelfiles bake `num_ctx` and sampling parameters into model metadata so clients see
+the correct context window. Without a Modelfile, clients read the model card default.
+
+```bash
+# Register the production Modelfiles (update FROM path if GGUF is stored elsewhere)
+ollama create qwen3-coder-next-256k-agent -f modelfiles/qwen3-coder-next-256k-agent.modelfile
+ollama create qwen3-coder-next-256k       -f modelfiles/qwen3-coder-next-256k.modelfile
+ollama create qwen3-coder-next-128k       -f modelfiles/qwen3-coder-next-128k.modelfile
+
+# Pin the primary model in memory to avoid cold-start delays
+curl -s http://localhost:11434/api/generate \
+  -d '{"model": "qwen3-coder-next-256k-agent", "keep_alive": -1}' > /dev/null
+```
+
+See [`docs/modelfile-guide.md`](docs/modelfile-guide.md) for parameter rationale and
+the two-model split pattern (agent vs chat).
+
 ### Point a coding agent at Ollama
 
 ```
 Base URL: http://<mac-ip>:11434/v1
 API Key:  (any string — Ollama ignores it)
-Model:    qwen2.5-coder:7b-instruct-q8_0
+Model:    qwen3-coder-next-256k-agent   (agentic tasks — use Zoo Code)
+Model:    qwen3-coder-next-256k         (chat — use Opilot or Copilot)
 ```
+
+**Note:** VS Code Copilot agent mode has a known tool call loop bug with local GGUF models.
+Use Zoo Code for agentic tasks. See [`docs/known-issues.md`](docs/known-issues.md).
 
 ### Run containers alongside Ollama (Colima)
 

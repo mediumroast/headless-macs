@@ -30,7 +30,7 @@ Override any value in `config.json` under `tools.ollama`.
 
 ---
 
-## Model Size × Quantisation Reference
+## Model Size × Quantization Reference
 
 | Model | Q4_K_M | Q5_K_M | Q8_0 | F16 |
 |---|---|---|---|---|

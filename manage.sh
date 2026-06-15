@@ -20,6 +20,7 @@ HOMEBREW_SCRIPT="$SCRIPT_DIR/scripts/homebrew_setup.sh"
 POWER_SCRIPT="$SCRIPT_DIR/scripts/power_management.sh"
 OLLAMA_SCRIPT="$SCRIPT_DIR/scripts/ollama_setup.sh"
 COLIMA_SCRIPT="$SCRIPT_DIR/scripts/colima_setup.sh"
+UPDATE_SCRIPT="$SCRIPT_DIR/update-tools.sh"
 
 # Show main menu
 show_menu() {
@@ -45,6 +46,9 @@ show_menu() {
     echo "   10) Power Management Status"
     echo "   11) Ollama Status"
     echo "   12) Colima Status"
+    echo ""
+  echo "  Updates:"
+    echo "   16) Update Ollama"
     echo ""
     echo "  Removal:"
     echo "   13) Remove Ollama"
@@ -403,6 +407,9 @@ interactive_mode() {
             15)
                 remove_all
                 ;;
+            16)
+                sudo "$UPDATE_SCRIPT" ollama
+                ;;
             0)
                 print_info "Exiting..."
                 exit 0
@@ -429,6 +436,7 @@ Commands:
     enable <component>     Enable/start a component
     disable <component>    Disable/stop a component
     remove <component>     Remove/uninstall a component
+    update <component>     Update a tool binary in-place and restart its daemon
     status [component]     Show status
     menu                   Interactive menu mode
     help                   Show this help message
@@ -444,6 +452,7 @@ Examples:
     $0 install all         # Full setup
     $0 install ollama      # Install only Ollama
     $0 enable ollama       # Start Ollama service
+    $0 update ollama       # Update Ollama binary and restart daemon
     $0 status              # Show status of all components
     $0 status ollama       # Show Ollama status only
     $0 disable all         # Disable all services
@@ -578,6 +587,27 @@ main() {
             esac
             ;;
             
+        update)
+            case "$component" in
+                ollama)
+                    sudo "$UPDATE_SCRIPT" ollama
+                    ;;
+                all)
+                    sudo "$UPDATE_SCRIPT" all
+                    ;;
+                "")
+                    print_error "No component specified"
+                    echo ""
+                    show_cli_usage
+                    exit 1
+                    ;;
+                *)
+                    print_error "Unknown component: $component"
+                    exit 1
+                    ;;
+            esac
+            ;;
+
         status)
             if [ -z "$component" ]; then
                 show_all_status

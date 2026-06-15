@@ -66,6 +66,8 @@ Enable tools in `config.json`:
 
 See [`docs/tool-comparison.md`](docs/tool-comparison.md) for a full comparison.
 
+> **Network defaults:** Services bind to `localhost` (`127.0.0.1`) by default and the firewall is left enabled. If your inference clients are on other LAN hosts, set `"localhost_only": false` in `config.json`. If you run unsigned Python services (Rapid-MLX, mlx-lm, Infinity) and cannot manage per-app firewall rules, also set `"disable_firewall": true` — only do this on an isolated trusted network.
+
 ---
 
 ## Hardware RAM Reference
@@ -143,14 +145,14 @@ Requires sudo. Idempotent — safe to run multiple times.
 sudo ./setup.sh
 ```
 
-- Power management: all pmset settings, caffeinate LaunchDaemon, MacBook clamshell warning
-- Network: TCP buffer sizes via `/etc/sysctl.conf`
+- Power management: all pmset settings (including `autorestart` for power-failure recovery), caffeinate LaunchDaemon, MacBook clamshell warning
+- Network: TCP buffer sizes via a `RunAtLoad` LaunchDaemon (persists across reboots)
 - Service suppression: Spotlight, telemetry, Siri, iCloud, Biome (SIP-gated)
 - UI: AirDrop, App Nap, animations, notifications, software update, Time Machine
-- SSH: enables Remote Login, hardens `sshd_config`
+- SSH: enables Remote Login, hardens sshd via a drop-in file at `/etc/ssh/sshd_config.d/100-headless.conf` (survives macOS updates)
 - Xcode CLT: headless install via `softwareupdate`
 
-Re-run after any macOS update to restore pmset settings.
+A daily launchd timer (`com.llm-server.pmset-heal`) automatically re-applies power settings after macOS updates. Manual re-run still works.
 
 ---
 
@@ -299,6 +301,13 @@ sudo launchctl print system/com.ollama.server
 tail -50 /var/log/ollama/stderr.log
 ```
 
+**Update Ollama to the latest version**
+```bash
+sudo ./update-tools.sh ollama
+# or via manage.sh:
+sudo ./manage.sh update ollama
+```
+
 **Something went wrong — clean slate**
 ```bash
 sudo ./restore.sh
@@ -314,7 +323,7 @@ See [`docs/known-issues.md`](docs/known-issues.md) for a full workarounds table.
 Pull requests welcome. Please ensure:
 - All scripts pass `bash -n <script>` (syntax check)
 - Changes are idempotent — running twice produces `[SKIP]` for already-applied settings
-- New tool plists include `HOME=/var/root`, `UserName root`, and use `bootstrap`/`bootout`
+- New tool plists include `UserName _llmserver`, `HOME=/Library/LLMServer`, and use `bootstrap`/`bootout`
 
 ## License
 

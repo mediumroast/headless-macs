@@ -78,6 +78,7 @@ See [`docs/tool-comparison.md`](docs/tool-comparison.md) for a full comparison.
 | MacBook Air M3 | 24 GB | 13B Q8 or 7B Q8 + embeddings |
 | MacBook Pro M4 | 32 GB | 32B Q4 or 13B Q8 · 2 models |
 | Mac Mini M4 | 64 GB | 70B Q4 or 32B Q5 · 3 models |
+| Mac Mini / Studio M4 Max | 128 GB | 70B Q8 or 32B Q8 + 70B Q4 · 3–4 models |
 | Mac Studio M4 Ultra | 192 GB | 405B Q4 · multiple large models |
 
 `install-tools.sh` automatically tunes Ollama's `MAX_LOADED_MODELS`, `NUM_PARALLEL`, and `MAX_CONTEXT` based on detected RAM. See [`docs/ram-sizing.md`](docs/ram-sizing.md).
@@ -313,6 +314,21 @@ sudo ./manage.sh update ollama
 sudo ./restore.sh
 # then reboot
 ```
+
+**Disable SIP (required for full service suppression on macOS 26 Tahoe — Apple Silicon)**
+
+`setup.sh` warns and runs safely with SIP enabled, but some service-disable calls need SIP off to persist across reboots.
+
+1. Shut down the Mac completely
+2. Press and **hold** the power button — keep holding until you see "Loading startup options" or a gear/Options icon appears
+3. Release the power button, then click **Options → Continue**
+4. Select your startup volume (Macintosh HD) → **Next**
+5. Select an admin user → enter password → **Continue**
+6. From the menu bar: **Utilities → Terminal**
+7. Run: `csrutil disable` then press Return
+8. Restart: `reboot`
+
+To re-enable SIP: boot into Recovery the same way and run `csrutil enable`.
 
 See [`docs/known-issues.md`](docs/known-issues.md) for a full workarounds table.
 

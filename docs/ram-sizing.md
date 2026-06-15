@@ -24,7 +24,8 @@ Override any value in `config.json` under `tools.ollama`.
 | MacBook Air M3 | 24 GB | 13B Q8 or 7B Q8 + embeddings |
 | MacBook Pro M4 | 32 GB | 32B Q4 or 13B Q8; 2 models |
 | Mac Mini M4 | 64 GB | 70B Q4 or 32B Q5; 3 models |
-| Mac Studio M4 Max | 128 GB | 70B Q8 or multiple 32B/70B |
+| Mac Mini M4 Max (Mac16,9) | 128 GB | 70B Q8 comfortable; 32B Q8 + 70B Q4 simultaneously; ~22–25 tok/s on 70B |
+| Mac Studio M4 Max | 128 GB | Same as Mac Mini M4 Max 128 GB |
 | Mac Studio M4 Ultra | 192 GB | 405B Q4; multiple large models |
 | Mac Pro M2 Ultra | 192 GB | Same as Studio Ultra |
 
@@ -96,15 +97,33 @@ ollama pull deepseek-r1:32b-q5_K_M             # ~24 GB — reasoning
 # BAAI/bge-large-en-v1.5        — higher quality
 ```
 
-### 128 GB+ (e.g. Mac Studio M4 Ultra)
+### 128 GB (e.g. Mac Mini M4 Max, Mac Studio M4 Max — Mac16,9)
+
+```bash
+# Generation — 70B Q8 is the sweet spot at this tier
+ollama pull qwen2.5:72b-instruct-q8_0          # ~77 GB — near-lossless quality
+ollama pull qwen2.5-coder:32b-instruct-q8_0    # ~35 GB — coding (fits alongside 70B Q4)
+ollama pull llama3.1:70b-instruct-q8_0         # ~75 GB
+
+# Simultaneous pair: 70B Q4 (~43 GB) + 32B Q8 (~35 GB) = ~78 GB — comfortable
+ollama pull qwen2.5:72b-instruct-q4_K_M
+ollama pull qwen2.5-coder:32b-instruct-q8_0
+
+# Embeddings (always fits alongside generation at this tier)
+# BAAI/bge-large-en-v1.5 or mxbai-embed-large via Infinity
+```
+
+Note: 405B Q4 requires ~230 GB and does **not** fit at 128 GB. Use the 192 GB M4 Ultra tier for that.
+
+### 192 GB+ (e.g. Mac Studio M4 Ultra)
 
 ```bash
 # Generation
 ollama pull qwen2.5:72b-instruct-q8_0          # ~77 GB — best single-node quality
 ollama pull qwen2.5-coder:32b-instruct-q8_0    # ~35 GB — coding
-ollama pull llama3.1:70b-instruct-q8_0         # ~75 GB
 
-# Multiple models loaded simultaneously at this tier
+# 405B fits at Q4 on this tier (~230 GB — leave OS headroom, close call)
+# Multiple large models loaded simultaneously
 ```
 
 ---
@@ -159,7 +178,7 @@ But a single 256K context request causes the primary model to be evicted.
 | Mac | RAM | OS | Primary model | KV headroom | Notes |
 |---|---|---|---|---|---|
 | Mac Mini M4 | 64 GB | 8 GB | 32B Q6_K (~26 GB) | ~30 GB | 128K context comfortable; 256K tight |
-| Mac Studio M4 Max | 128 GB | 8 GB | 80B MoE Q6_K (~62 GB) | ~58 GB | 256K context comfortable; embeddings alongside |
+| Mac Mini / Studio M4 Max (Mac16,9) | 128 GB | 8 GB | 70B Q8 (~77 GB) | ~43 GB | 256K context comfortable; 32B alongside at Q4 |
 | Mac Studio M4 Ultra | 192 GB | 8 GB | 80B MoE Q8_0 (~85 GB) | ~99 GB | Multiple large models; full 256K on all |
 
 ---

@@ -15,7 +15,7 @@
 | Issue | Affects | Symptom | Fix |
 |---|---|---|---|
 | **pmset values reset after macOS update** | macOS 26 Tahoe | Machine starts sleeping again after an update | Handled automatically by the `com.llm-server.pmset-heal` daily timer installed by `setup.sh` (runs at 03:00). Manual re-run `sudo ./setup.sh` also works. |
-| **SIP blocks persistent service disabling** | macOS 15+ with SIP on | `launchctl disable` appears to succeed but service restarts after reboot | Disable SIP in Recovery Mode: boot → Terminal → `csrutil disable`. `setup.sh` warns and continues safely with SIP on. |
+| **SIP blocks persistent service disabling** | macOS 15+ / 26 Tahoe with SIP on | `launchctl disable` appears to succeed but service restarts after reboot | Disable SIP in Recovery Mode (see **Entering Recovery Mode** section below). `setup.sh` warns and continues safely with SIP on — only service suppression persistence is affected. |
 | **`launchctl load` / `unload` deprecated** | macOS 26 Tahoe | Commands silently fail or behave incorrectly | Use `launchctl bootstrap system <plist>` and `launchctl bootout system <plist>`. All scripts in this repo use the correct commands. |
 | **Sequoia 15.3+ sleep regression** | macOS 15.3+ | Machine sleeps despite pmset settings | The caffeinate LaunchDaemon (`com.llm-server.caffeinate`) installed by `setup.sh` is the safety net. Verify it's running: `sudo launchctl print system/com.llm-server.caffeinate` |
 | **`xcode-select --install` fails headless** | All headless Macs | GUI dialog appears with no display attached | Use the softwareupdate method. `setup.sh` handles this automatically. |
@@ -102,6 +102,49 @@
 | **VS Code connection leak (Remote-SSH + Ollama tunnel)** | VS Code on a remote machine connecting to Ollama via SSH tunnel | TCP connection count climbs: 58 → 136 → 236 → 486 over 30 minutes. After ~5 minutes with a saturated pool, requests silently fail with no error shown. | On the remote (Linux) host, apply aggressive TCP keepalive: `sudo sysctl -w net.ipv4.tcp_keepalive_time=60 net.ipv4.tcp_keepalive_intvl=10 net.ipv4.tcp_keepalive_probes=3 net.ipv4.tcp_fin_timeout=15 net.ipv4.tcp_tw_reuse=1` — persist to `/etc/sysctl.conf`. Stabilises at ~162 connections. Also set `"opilot.localModelRefreshInterval": 300` in VS Code settings. |
 | **MLX models ignore Modelfile `num_ctx`** | Rapid-MLX, mlx-lm | Setting `num_ctx` in a Modelfile has no effect on MLX-quantised models. Client sees wrong context window. | Context window is fixed at MLX conversion time. To change it, reconvert the model with the desired `--max-position-embeddings`. Use GGUF + Ollama when `num_ctx` control is required. |
 | **Ollama UI context window does not update client metadata** | All Ollama clients | Setting context window in Ollama UI shows correct value in Ollama but client (VS Code, Zoo Code) still sends requests sized to the model card default. | Use a Modelfile with `PARAMETER num_ctx` set explicitly. This is the only mechanism that bakes `num_ctx` into the model metadata that clients read. See `docs/modelfile-guide.md`. |
+
+---
+
+## Entering Recovery Mode (Apple Silicon — macOS 26 Tahoe)
+
+Required for: disabling SIP, running Startup Security Utility, erasing and reinstalling macOS.
+
+> **Note:** This procedure applies to all Apple Silicon Macs (M1 and later). Intel Macs use Command+R at startup instead — these steps do not apply to Intel.
+
+**Steps:**
+
+1. Shut down the Mac completely. If it won't respond, hold the power button for up to 10 seconds until it powers off.
+2. Press and **hold** the power button. Keep holding it past the normal startup chime.
+3. Release when you see **"Loading startup options"** or a gear/Options icon on screen.
+4. Click **Options**, then click **Continue** beneath it.
+5. If prompted to select a volume, choose **Macintosh HD** → click **Next**.
+6. Select an admin user account → click **Next** → enter the account password → click **Continue**.
+7. You are now in Recovery Mode. The macOS Utilities window appears.
+
+**To disable SIP:**
+
+```
+Utilities (menu bar) → Terminal
+csrutil disable
+reboot
+```
+
+**To re-enable SIP** (recommended after completing setup):
+
+```
+Boot into Recovery Mode using the same steps above
+Utilities → Terminal
+csrutil enable
+reboot
+```
+
+**To check SIP status** at any time (no reboot required):
+
+```bash
+csrutil status
+```
+
+**macOS 26 Tahoe note:** Tahoe adds a **Recovery Assistant** under Utilities → Recovery Assistant that can automatically diagnose and repair startup problems. If your Mac is having startup issues, try this before manual intervention. SIP disable/enable via `csrutil` works identically to prior versions.
 
 ---
 

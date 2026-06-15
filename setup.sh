@@ -8,8 +8,17 @@
 #
 # Requires: sudo (prompted once at start)
 # Idempotent: safe to run multiple times — skips already-applied settings
+#
+# Flags:
+#   --power-only   Run Section 1 (pmset + caffeinate) only and exit.
+#                  Used by the com.llm-server.pmset-heal daily launchd timer.
 
 set -euo pipefail
+
+POWER_ONLY=false
+for arg in "$@"; do
+  [[ "$arg" == "--power-only" ]] && POWER_ONLY=true
+done
 
 # ---------------------------------------------------------------------------
 # Guard: Apple Silicon only
@@ -110,18 +119,6 @@ pmset_apply() {
   fi
 }
 
-# Apply a sysctl setting persistently via /etc/sysctl.conf
-sysctl_apply() {
-  local key="$1" value="$2"
-  local sysctl_conf="/etc/sysctl.conf"
-  if grep -q "^${key}=" "$sysctl_conf" 2>/dev/null; then
-    echo "[SKIP] sysctl $key already in $sysctl_conf"
-  else
-    echo "${key}=${value}" | sudo tee -a "$sysctl_conf" > /dev/null
-    sudo sysctl -w "${key}=${value}" 2>/dev/null || true
-    echo "[SET]  sysctl $key=$value"
-  fi
-}
 
 # Disable a launchd service (SIP-gated for system services)
 disable_service() {
@@ -151,6 +148,7 @@ pmset_apply standby       0
 pmset_apply autopoweroff  0
 pmset_apply powernap      0
 pmset_apply networkoversleep 0
+pmset_apply autorestart   1    # Restart after power failure — essential for 24/7 headless operation
 
 # Remote access
 pmset_apply womp          1    # Wake on magic packet (Wake-on-LAN)
@@ -202,6 +200,49 @@ else
   echo "[SKIP] caffeinate LaunchDaemon already installed"
 fi
 
+# pmset self-heal timer — re-applies power settings daily at 03:00.
+# macOS updates silently reset pmset values; this closes that gap automatically.
+PMSET_HEAL_PLIST="/Library/LaunchDaemons/com.llm-server.pmset-heal.plist"
+if [[ ! -f "$PMSET_HEAL_PLIST" ]]; then
+  SETUP_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/setup.sh"
+  sudo tee "$PMSET_HEAL_PLIST" > /dev/null <<PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.llm-server.pmset-heal</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>${SETUP_PATH}</string>
+    <string>--power-only</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>3</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key><string>/var/log/mac-llm-setup/pmset-heal.log</string>
+  <key>StandardErrorPath</key><string>/var/log/mac-llm-setup/pmset-heal.log</string>
+</dict>
+</plist>
+PLIST_EOF
+  sudo chown root:wheel "$PMSET_HEAL_PLIST"
+  sudo chmod 644 "$PMSET_HEAL_PLIST"
+  sudo launchctl bootstrap system "$PMSET_HEAL_PLIST"
+  echo "[SET]  pmset-heal daily timer installed (runs at 03:00)"
+else
+  echo "[SKIP] pmset-heal timer already installed"
+fi
+
+# --power-only: exit here, skipping all other sections
+if [[ "$POWER_ONLY" == true ]]; then
+  echo ""
+  echo "=== setup.sh --power-only complete at $(date) ==="
+  exit 0
+fi
+
 echo ""
 echo "========================================"
 echo "Section 2: Network Stack Tuning"
@@ -210,18 +251,52 @@ echo ""
 
 # ---------------------------------------------------------------------------
 # 1.2 Network Stack Tuning (only if enabled in config)
+#
+# macOS stopped reading /etc/sysctl.conf at boot since Catalina.
+# Persistence requires a LaunchDaemon with RunAtLoad that re-applies
+# each sysctl key on every boot.
 # ---------------------------------------------------------------------------
 NETWORK_TUNING=$(echo "$CONFIG" | jq -r '.system.network_tuning // true')
 
+SYSCTL_PLIST="/Library/LaunchDaemons/com.llm-server.sysctl-tuning.plist"
+
 if [[ "$NETWORK_TUNING" == "true" ]]; then
-  sysctl_apply "net.inet.tcp.sendspace"     "1048576"
-  sysctl_apply "net.inet.tcp.recvspace"     "1048576"
-  sysctl_apply "kern.ipc.maxsockbuf"        "8388608"
-  sysctl_apply "net.inet.tcp.autorcvbufmax" "8388608"
-  sysctl_apply "net.inet.tcp.autosndbufmax" "8388608"
-  sysctl_apply "kern.ipc.somaxconn"         "2048"
+  if [[ ! -f "$SYSCTL_PLIST" ]]; then
+    sudo tee "$SYSCTL_PLIST" > /dev/null <<'PLIST_EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.llm-server.sysctl-tuning</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>/usr/sbin/sysctl -w net.inet.tcp.sendspace=1048576; /usr/sbin/sysctl -w net.inet.tcp.recvspace=1048576; /usr/sbin/sysctl -w kern.ipc.maxsockbuf=8388608; /usr/sbin/sysctl -w net.inet.tcp.autorcvbufmax=8388608; /usr/sbin/sysctl -w net.inet.tcp.autosndbufmax=8388608; /usr/sbin/sysctl -w kern.ipc.somaxconn=2048</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+</dict>
+</plist>
+PLIST_EOF
+    sudo chown root:wheel "$SYSCTL_PLIST"
+    sudo chmod 644 "$SYSCTL_PLIST"
+    sudo launchctl bootstrap system "$SYSCTL_PLIST"
+    echo "[SET]  sysctl-tuning LaunchDaemon installed and started"
+  else
+    echo "[SKIP] sysctl-tuning LaunchDaemon already installed"
+  fi
+
+  # Apply live for the current session
   # NOTE: net.inet.tcp.rfc1323 removed in El Capitan — do not add
   # NOTE: serverperfmode is Intel-only — breaks on Apple Silicon — do not add
+  sudo sysctl -w net.inet.tcp.sendspace=1048576     2>/dev/null || true
+  sudo sysctl -w net.inet.tcp.recvspace=1048576     2>/dev/null || true
+  sudo sysctl -w kern.ipc.maxsockbuf=8388608        2>/dev/null || true
+  sudo sysctl -w net.inet.tcp.autorcvbufmax=8388608 2>/dev/null || true
+  sudo sysctl -w net.inet.tcp.autosndbufmax=8388608 2>/dev/null || true
+  sudo sysctl -w kern.ipc.somaxconn=2048            2>/dev/null || true
+  echo "[SET]  Network sysctl tuning applied (live + persistent via LaunchDaemon)"
 else
   echo "[SKIP] Network tuning disabled in config.json"
 fi
@@ -371,42 +446,61 @@ echo ""
 
 # ---------------------------------------------------------------------------
 # 1.4 SSH Hardening
+#
+# Uses a drop-in file under /etc/ssh/sshd_config.d/ rather than editing
+# /etc/ssh/sshd_config directly. The drop-in survives macOS OS updates;
+# direct edits to sshd_config are silently overwritten.
+#
+# macOS sshd is launchd socket-activated — new connections automatically
+# pick up the drop-in without a daemon restart.
+#
+# PasswordAuthentication is set to no only when an authorized_keys file
+# already exists. Setting it without confirmed key access on a headless box
+# is a lockout risk.
 # ---------------------------------------------------------------------------
-SSHD_CONFIG="/etc/ssh/sshd_config"
-
-# Backup sshd_config if not already done today
-SSHD_BACKUP="${SSHD_CONFIG}.bak-$(date +%Y%m%d)"
-if [[ ! -f "$SSHD_BACKUP" ]]; then
-  sudo cp "$SSHD_CONFIG" "$SSHD_BACKUP" 2>/dev/null || true
-  echo "[BACKUP] $SSHD_CONFIG → $SSHD_BACKUP"
-fi
+SSHD_DROPIN_DIR="/etc/ssh/sshd_config.d"
+SSHD_DROPIN="$SSHD_DROPIN_DIR/100-headless.conf"
 
 # Enable SSH
 sudo systemsetup -setremotelogin on 2>/dev/null || true
 echo "[SET]  Remote Login (SSH) enabled"
 
-# Apply sshd settings idempotently
-set_sshd() {
-  local key="$1" value="$2"
-  if grep -qE "^#?[[:space:]]*${key}[[:space:]]" "$SSHD_CONFIG" 2>/dev/null; then
-    sudo sed -i '' "s|^#\?[[:space:]]*${key}[[:space:]].*|${key} ${value}|" "$SSHD_CONFIG"
-  else
-    echo "${key} ${value}" | sudo tee -a "$SSHD_CONFIG" > /dev/null
-  fi
-  echo "[SET]  sshd: $key $value"
-}
+# Check for an authorized_keys file before disabling password auth
+AUTHORIZED_KEYS_FOUND=false
+if [[ -f "$HOME/.ssh/authorized_keys" ]] || [[ -f "/etc/ssh/authorized_keys" ]]; then
+  AUTHORIZED_KEYS_FOUND=true
+fi
 
-set_sshd "PermitRootLogin"      "no"
-set_sshd "PasswordAuthentication" "no"
-set_sshd "PubkeyAuthentication" "yes"
-set_sshd "MaxAuthTries"         "3"
-set_sshd "ClientAliveInterval"  "120"
-set_sshd "ClientAliveCountMax"  "10"
+sudo mkdir -p "$SSHD_DROPIN_DIR"
 
-# Restart sshd to apply changes
-sudo launchctl stop  com.openssh.sshd 2>/dev/null || true
-sudo launchctl start com.openssh.sshd 2>/dev/null || true
-echo "[SET]  sshd restarted"
+# Build the drop-in content; only write if different from what's on disk
+DROPIN_CONTENT="# Managed by headless-macs setup.sh — do not edit manually.
+# To change settings, edit config and re-run sudo ./setup.sh
+PermitRootLogin no
+PubkeyAuthentication yes
+MaxAuthTries 3
+ClientAliveInterval 120
+ClientAliveCountMax 10"
+
+if [[ "$AUTHORIZED_KEYS_FOUND" == true ]]; then
+  DROPIN_CONTENT="${DROPIN_CONTENT}
+PasswordAuthentication no"
+else
+  echo "[WARN] No authorized_keys found — skipping PasswordAuthentication no to avoid lockout"
+  echo "       Copy your public key to ~/.ssh/authorized_keys, then re-run setup.sh"
+fi
+
+EXISTING=""
+[[ -f "$SSHD_DROPIN" ]] && EXISTING=$(sudo cat "$SSHD_DROPIN" 2>/dev/null || true)
+
+if [[ "$EXISTING" == "$DROPIN_CONTENT" ]]; then
+  echo "[SKIP] sshd drop-in already up to date: $SSHD_DROPIN"
+else
+  echo "$DROPIN_CONTENT" | sudo tee "$SSHD_DROPIN" > /dev/null
+  sudo chmod 644 "$SSHD_DROPIN"
+  echo "[SET]  sshd drop-in written: $SSHD_DROPIN"
+  echo "       New connections will pick up the config automatically (socket-activated sshd)."
+fi
 
 echo ""
 echo "========================================"
@@ -447,15 +541,16 @@ echo ""
 # ---------------------------------------------------------------------------
 # 1.6 Application Firewall
 #
-# Default: disabled for headless inference servers — Python-based services
-# (Rapid-MLX, mlx-lm, Infinity) are unsigned and would silently block on a
-# fresh install with no one present to click "Allow".
+# Default: left ENABLED. Services bind to localhost by default (localhost_only: true).
+# Clients on other LAN hosts must set network.localhost_only: false in config.json
+# AND decide whether to disable the firewall.
 #
-# Override: set network.disable_firewall: false in config.json to leave
-# the firewall in its current state (e.g. if this machine is not dedicated
-# to inference or has other firewall policy requirements).
+# Set network.disable_firewall: true only if you run unsigned Python inference
+# services (Rapid-MLX, mlx-lm, Infinity) on an isolated trusted LAN and cannot
+# manage per-app firewall rules — those services would silently block with no
+# one present to click "Allow".
 # ---------------------------------------------------------------------------
-DISABLE_FIREWALL=$(echo "$CONFIG" | jq -r '.network.disable_firewall // true')
+DISABLE_FIREWALL=$(echo "$CONFIG" | jq -r '.network.disable_firewall // false')
 FIREWALL_CMD="/usr/libexec/ApplicationFirewall/socketfilterfw"
 
 if [[ "$DISABLE_FIREWALL" == "true" ]]; then
@@ -464,15 +559,61 @@ if [[ "$DISABLE_FIREWALL" == "true" ]]; then
     echo "[SKIP] Application Firewall already disabled"
   else
     sudo "$FIREWALL_CMD" --setglobalstate off
-    echo "[SET]  Application Firewall disabled"
-    echo "       Reason: unsigned Python inference services require open inbound ports."
-    echo "       Override: set network.disable_firewall: false in config.json"
+    echo "[SET]  Application Firewall disabled (network.disable_firewall: true in config)"
+    echo "       Ensure inference nodes are on a trusted isolated network."
   fi
 else
-  echo "[SKIP] Firewall management skipped (network.disable_firewall: false in config)"
-  echo "       Ensure inbound ports are open: 11434 (Ollama) 8000 (Rapid-MLX)"
+  echo "[SKIP] Firewall left enabled (default — network.disable_firewall: false)"
+  echo "       If inference clients are on other LAN hosts, set network.localhost_only: false"
+  echo "       and ensure inbound ports are open: 11434 (Ollama) 8000 (Rapid-MLX)"
   echo "       8080 (mlx-lm) 7997 (Infinity) 52415 (Exo)"
 fi
+
+echo ""
+echo "========================================"
+echo "Section 7: File Descriptor Limits"
+echo "========================================"
+echo ""
+
+# ---------------------------------------------------------------------------
+# 1.7 File Descriptor Limits
+#
+# Concurrent model loading and parallel inference connections can exhaust
+# the default fd limit. A LaunchDaemon raises the system-wide maxfiles on
+# every boot.
+# ---------------------------------------------------------------------------
+MAXFILES_PLIST="/Library/LaunchDaemons/com.llm-server.maxfiles.plist"
+if [[ ! -f "$MAXFILES_PLIST" ]]; then
+  sudo tee "$MAXFILES_PLIST" > /dev/null <<'PLIST_EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.llm-server.maxfiles</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/launchctl</string>
+    <string>limit</string>
+    <string>maxfiles</string>
+    <string>524288</string>
+    <string>1048576</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+</dict>
+</plist>
+PLIST_EOF
+  sudo chown root:wheel "$MAXFILES_PLIST"
+  sudo chmod 644 "$MAXFILES_PLIST"
+  sudo launchctl bootstrap system "$MAXFILES_PLIST"
+  echo "[SET]  maxfiles LaunchDaemon installed and started"
+else
+  echo "[SKIP] maxfiles LaunchDaemon already installed"
+fi
+
+# Apply live for the current session
+sudo launchctl limit maxfiles 524288 1048576 2>/dev/null || true
+echo "[SET]  File descriptor limits raised (soft: 524288 / hard: 1048576)"
 
 echo ""
 echo "========================================"

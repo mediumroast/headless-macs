@@ -35,15 +35,16 @@ echo ""
 # Confirmation
 # ---------------------------------------------------------------------------
 echo "This will undo all changes made by setup.sh and install-tools.sh:"
-echo "  • Restore pmset to safe defaults"
 echo "  • Remove all LLM server LaunchDaemons (Ollama, Rapid-MLX, mlx-lm, Infinity)"
+echo "  • Remove infrastructure LaunchDaemons (caffeinate, sysctl-tuning, maxfiles, pmset-heal)"
 echo "  • Remove Exo LaunchAgent"
-echo "  • Remove caffeinate LaunchDaemon"
+echo "  • Remove _llmserver service account and /Library/LLMServer"
+echo "  • Restore pmset to safe defaults"
 echo "  • Re-enable suppressed system services (from snapshot)"
 echo "  • Restore Spotlight indexing"
-echo "  • Restore sshd_config from backup"
+echo "  • Remove sshd drop-in (/etc/ssh/sshd_config.d/100-headless.conf)"
 echo "  • Restore defaults (AirDrop, App Nap, animations, software update, Time Machine)"
-echo "  • Remove mac-llm sysctl entries from /etc/sysctl.conf"
+echo "  • Remove mac-llm sysctl entries from /etc/sysctl.conf (if present from older install)"
 echo "  • Re-enable Application Firewall"
 echo ""
 read -r -p "Proceed with restore? (y/N): " CONFIRM
@@ -79,11 +80,14 @@ echo "Section 1: Remove LLM Server Services"
 echo "========================================"
 echo ""
 
-remove_daemon "/Library/LaunchDaemons/com.ollama.server.plist"   "com.ollama.server"
-remove_daemon "/Library/LaunchDaemons/com.rapid-mlx.server.plist" "com.rapid-mlx.server"
-remove_daemon "/Library/LaunchDaemons/com.mlx-lm.server.plist"   "com.mlx-lm.server"
-remove_daemon "/Library/LaunchDaemons/com.infinity.server.plist"  "com.infinity.server"
+remove_daemon "/Library/LaunchDaemons/com.ollama.server.plist"       "com.ollama.server"
+remove_daemon "/Library/LaunchDaemons/com.rapid-mlx.server.plist"    "com.rapid-mlx.server"
+remove_daemon "/Library/LaunchDaemons/com.mlx-lm.server.plist"       "com.mlx-lm.server"
+remove_daemon "/Library/LaunchDaemons/com.infinity.server.plist"      "com.infinity.server"
 remove_daemon "/Library/LaunchDaemons/com.llm-server.caffeinate.plist" "com.llm-server.caffeinate"
+remove_daemon "/Library/LaunchDaemons/com.llm-server.sysctl-tuning.plist" "com.llm-server.sysctl-tuning"
+remove_daemon "/Library/LaunchDaemons/com.llm-server.maxfiles.plist"  "com.llm-server.maxfiles"
+remove_daemon "/Library/LaunchDaemons/com.llm-server.pmset-heal.plist" "com.llm-server.pmset-heal"
 
 # Exo runs as a user LaunchAgent — no sudo needed
 EXO_PLIST="$HOME/Library/LaunchAgents/com.exo.node.plist"
@@ -161,19 +165,15 @@ echo "Section 5: Restore sshd_config"
 echo "========================================"
 echo ""
 
-SSHD_CONFIG="/etc/ssh/sshd_config"
-# Find the most recent backup made by setup.sh
-SSHD_BACKUP=$(ls -t "${SSHD_CONFIG}.bak-"* 2>/dev/null | head -1 || echo "")
-
-if [[ -n "$SSHD_BACKUP" && -f "$SSHD_BACKUP" ]]; then
-  sudo cp "$SSHD_BACKUP" "$SSHD_CONFIG"
-  echo "[RESTORED] $SSHD_CONFIG from $SSHD_BACKUP"
+SSHD_DROPIN="/etc/ssh/sshd_config.d/100-headless.conf"
+if [[ -f "$SSHD_DROPIN" ]]; then
+  sudo rm -f "$SSHD_DROPIN"
+  echo "[REMOVED] $SSHD_DROPIN"
   sudo launchctl stop  com.openssh.sshd 2>/dev/null || true
   sudo launchctl start com.openssh.sshd 2>/dev/null || true
   echo "[SET]  sshd restarted"
 else
-  echo "[WARN] No sshd_config backup found — skipping"
-  echo "       Original may be at ${SSHD_CONFIG}.bak-YYYYMMDD"
+  echo "[SKIP] $SSHD_DROPIN (not present)"
 fi
 
 echo ""
@@ -275,6 +275,35 @@ if [[ -x "$FIREWALL_CMD" ]]; then
 else
   echo "[WARN] socketfilterfw not found — firewall state unchanged"
 fi
+
+echo ""
+echo "========================================"
+echo "Section 9: Remove _llmserver Service Account"
+echo "========================================"
+echo ""
+
+if id "_llmserver" &>/dev/null 2>&1; then
+  sudo dscl . -delete /Users/_llmserver 2>/dev/null || true
+  echo "[REMOVED] _llmserver user"
+else
+  echo "[SKIP]    _llmserver user (not present)"
+fi
+
+if dscl . -read /Groups/_llmserver PrimaryGroupID &>/dev/null 2>&1; then
+  sudo dscl . -delete /Groups/_llmserver 2>/dev/null || true
+  echo "[REMOVED] _llmserver group"
+else
+  echo "[SKIP]    _llmserver group (not present)"
+fi
+
+if [[ -d /Library/LLMServer ]]; then
+  sudo rm -rf /Library/LLMServer
+  echo "[REMOVED] /Library/LLMServer"
+else
+  echo "[SKIP]    /Library/LLMServer (not present)"
+fi
+
+dscacheutil -flushcache 2>/dev/null || true
 
 echo ""
 echo "========================================"

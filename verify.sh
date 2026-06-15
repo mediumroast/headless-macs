@@ -125,6 +125,7 @@ check_pmset "disksleep"     "0"
 check_pmset "standby"       "0"
 check_pmset "womp"          "1"
 check_pmset "tcpkeepalive"  "1"
+check_pmset "autorestart"   "1"
 
 EXPECTED_POWERMODE=$(echo "$CONFIG" | jq -r '.system.power_mode // 2')
 check_pmset "powermode" "$EXPECTED_POWERMODE"
@@ -135,6 +136,14 @@ if sudo launchctl print "system/com.llm-server.caffeinate" 2>/dev/null | grep -q
 else
   _warn "caffeinate daemon not running — sleep regression safety net missing"
   _info "Fix: sudo launchctl bootstrap system /Library/LaunchDaemons/com.llm-server.caffeinate.plist"
+fi
+
+# sysctl-tuning daemon
+if sudo launchctl print "system/com.llm-server.sysctl-tuning" 2>/dev/null | grep -q "state = running\|last exit code = 0"; then
+  _pass "sysctl-tuning daemon present (network tuning persists across reboots)"
+else
+  _warn "sysctl-tuning daemon not found — network tuning will not survive reboot"
+  _info "Fix: sudo launchctl bootstrap system /Library/LaunchDaemons/com.llm-server.sysctl-tuning.plist"
 fi
 
 # Spotlight
@@ -150,6 +159,29 @@ if lsof -iTCP:22 -sTCP:LISTEN &>/dev/null 2>&1; then
   _pass "SSH enabled (port 22 listening)"
 else
   _warn "SSH not enabled — enable with: sudo systemsetup -setremotelogin on"
+fi
+
+# sshd drop-in hardening
+SSHD_DROPIN="/etc/ssh/sshd_config.d/100-headless.conf"
+if [[ -f "$SSHD_DROPIN" ]]; then
+  _pass "sshd drop-in present ($SSHD_DROPIN)"
+  if grep -q "^PasswordAuthentication no" "$SSHD_DROPIN" 2>/dev/null; then
+    _pass "sshd: PasswordAuthentication no (key-only login enforced)"
+  else
+    _warn "sshd: PasswordAuthentication no not set — password login still permitted"
+    _info "Copy your public key to ~/.ssh/authorized_keys then re-run setup.sh"
+  fi
+else
+  _warn "sshd drop-in not found — SSH hardening not applied"
+  _info "Fix: sudo ./setup.sh"
+fi
+
+# _llmserver service account
+if id "_llmserver" &>/dev/null 2>&1; then
+  _pass "_llmserver service account exists (serving daemons run unprivileged)"
+else
+  _warn "_llmserver service account missing — serving daemons will run as root"
+  _info "Fix: sudo ./install-tools.sh"
 fi
 
 # MacBook clamshell reminder
@@ -174,6 +206,15 @@ if [[ "$NETWORK_TUNING" == "true" ]]; then
   check_sysctl "kern.ipc.somaxconn"         "2048"
 else
   _skip "Network tuning disabled in config.json"
+fi
+
+# File descriptor limits
+MAXFILES_SOFT=$(launchctl limit maxfiles 2>/dev/null | awk '{print $2}')
+if [[ -n "$MAXFILES_SOFT" ]] && [[ "$MAXFILES_SOFT" -ge 524288 ]] 2>/dev/null; then
+  _pass "maxfiles soft limit: $MAXFILES_SOFT"
+else
+  _warn "maxfiles soft limit low (${MAXFILES_SOFT:-unknown}) — may exhaust under parallel inference"
+  _info "Fix: sudo launchctl bootstrap system /Library/LaunchDaemons/com.llm-server.maxfiles.plist"
 fi
 
 echo ""

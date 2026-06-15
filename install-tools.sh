@@ -116,6 +116,61 @@ check_endpoint() {
   fi
 }
 
+# ---------------------------------------------------------------------------
+# Service account: _llmserver
+# Serving tool daemons run as this unprivileged user instead of root.
+# ---------------------------------------------------------------------------
+LLMSERVER_USER="_llmserver"
+LLMSERVER_HOME="/Library/LLMServer"
+
+ensure_llmserver_user() {
+  if id "$LLMSERVER_USER" &>/dev/null 2>&1; then
+    echo "[SKIP] $LLMSERVER_USER service account already exists (UID $(id -u "$LLMSERVER_USER"))"
+    return 0
+  fi
+
+  # Find an available UID in the custom service account range (400-499)
+  local uid=""
+  local used_ids
+  used_ids=$(dscl . -list /Users UniqueID 2>/dev/null | awk '{print $2}')
+  for candidate in $(seq 400 499); do
+    if ! echo "$used_ids" | grep -qx "$candidate"; then
+      uid="$candidate"
+      break
+    fi
+  done
+
+  if [[ -z "$uid" ]]; then
+    echo "[FAIL] No available UID in range 400-499 for $LLMSERVER_USER"
+    exit 1
+  fi
+
+  # Group
+  sudo dscl . -create "/Groups/$LLMSERVER_USER"
+  sudo dscl . -create "/Groups/$LLMSERVER_USER" PrimaryGroupID "$uid"
+  sudo dscl . -create "/Groups/$LLMSERVER_USER" RealName "LLM Server"
+  sudo dscl . -create "/Groups/$LLMSERVER_USER" Password "*"
+
+  # User
+  sudo dscl . -create "/Users/$LLMSERVER_USER"
+  sudo dscl . -create "/Users/$LLMSERVER_USER" UserShell /usr/bin/false
+  sudo dscl . -create "/Users/$LLMSERVER_USER" RealName "LLM Server"
+  sudo dscl . -create "/Users/$LLMSERVER_USER" UniqueID "$uid"
+  sudo dscl . -create "/Users/$LLMSERVER_USER" PrimaryGroupID "$uid"
+  sudo dscl . -create "/Users/$LLMSERVER_USER" NFSHomeDirectory "$LLMSERVER_HOME"
+  sudo dscl . -create "/Users/$LLMSERVER_USER" Password "*"
+  sudo dscl . -create "/Users/$LLMSERVER_USER" IsHidden 1
+
+  # Home directory
+  sudo mkdir -p "$LLMSERVER_HOME"
+  sudo chown "${LLMSERVER_USER}:${LLMSERVER_USER}" "$LLMSERVER_HOME"
+  sudo chmod 750 "$LLMSERVER_HOME"
+
+  dscacheutil -flushcache 2>/dev/null || true
+
+  echo "[SET]  $LLMSERVER_USER created (UID $uid, home $LLMSERVER_HOME)"
+}
+
 echo "========================================"
 echo "Tool installation plan (from config.json)"
 echo "========================================"
@@ -124,6 +179,9 @@ echo "  Rapid-MLX: $(echo "$CONFIG" | jq -r '.tools.rapid_mlx.enabled')"
 echo "  mlx-lm:    $(echo "$CONFIG" | jq -r '.tools.mlx_lm.enabled')"
 echo "  Infinity:  $(echo "$CONFIG" | jq -r '.tools.infinity.enabled')"
 echo "  Exo:       $(echo "$CONFIG" | jq -r '.tools.exo.enabled')"
+echo ""
+
+ensure_llmserver_user
 echo ""
 
 # ===========================================================================
@@ -157,17 +215,24 @@ if [[ "$(echo "$CONFIG" | jq -r '.tools.ollama.enabled')" == "true" ]]; then
     2>/dev/null || true
   pkill -f "Ollama.app" 2>/dev/null || true
 
+  # Stop any Homebrew-managed Ollama service — it holds port 11434 and conflicts
+  # with our LaunchDaemon
+  if brew services list 2>/dev/null | grep -q "^ollama"; then
+    brew services stop ollama 2>/dev/null || true
+    echo "[SET]  Stopped Homebrew Ollama service (our LaunchDaemon takes over)"
+  fi
+
   # --- Models directory ---
   OLLAMA_MODELS_DIR=$(echo "$CONFIG" | jq -r '.tools.ollama.models_dir')
   sudo mkdir -p "$OLLAMA_MODELS_DIR"
-  sudo chown -R root:wheel "$(dirname "$OLLAMA_MODELS_DIR")"
+  sudo chown -R "${LLMSERVER_USER}:${LLMSERVER_USER}" "$(dirname "$OLLAMA_MODELS_DIR")"
   sudo mdutil -i off "$OLLAMA_MODELS_DIR" 2>/dev/null || true
   sudo mdutil -E  "$OLLAMA_MODELS_DIR" 2>/dev/null || true
   echo "[OK]   Models dir: $OLLAMA_MODELS_DIR (Spotlight excluded)"
 
   # Log directory
   sudo mkdir -p /var/log/ollama
-  sudo chown root:wheel /var/log/ollama
+  sudo chown "${LLMSERVER_USER}:${LLMSERVER_USER}" /var/log/ollama
 
   # --- RAM-based auto-tuning ---
   if   [[ $RAM_GB -le 16 ]]; then MAX_LOADED=1; NUM_PAR=1; MAX_CTX=8192
@@ -219,7 +284,7 @@ if [[ "$(echo "$CONFIG" | jq -r '.tools.ollama.enabled')" == "true" ]]; then
   <key>EnvironmentVariables</key>
   <dict>
     <!-- HOME is required: Ollama panics with 'panic: \$HOME is not defined' without it -->
-    <key>HOME</key><string>/var/root</string>
+    <key>HOME</key><string>${LLMSERVER_HOME}</string>
     <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>OLLAMA_MODELS</key><string>${OLLAMA_MODELS_DIR}</string>
     <key>OLLAMA_HOST</key><string>${OLLAMA_HOST}</string>
@@ -234,7 +299,7 @@ if [[ "$(echo "$CONFIG" | jq -r '.tools.ollama.enabled')" == "true" ]]; then
   </dict>
 
   <key>WorkingDirectory</key><string>/tmp</string>
-  <key>UserName</key><string>root</string>
+  <key>UserName</key><string>${LLMSERVER_USER}</string>
 </dict>
 </plist>
 PLIST
@@ -293,13 +358,13 @@ if [[ "$(echo "$CONFIG" | jq -r '.tools.rapid_mlx.enabled')" == "true" ]]; then
     RMLX_CACHE="${VOL_ROOT}/rapid-mlx"
   fi
   sudo mkdir -p "$RMLX_CACHE"
-  sudo chown -R root:wheel "$RMLX_CACHE"
+  sudo chown -R "${LLMSERVER_USER}:${LLMSERVER_USER}" "$RMLX_CACHE"
   sudo mdutil -i off "$RMLX_CACHE" 2>/dev/null || true
   echo "[OK]   Rapid-MLX cache: $RMLX_CACHE"
 
   # Log directory
   sudo mkdir -p /var/log/rapid-mlx
-  sudo chown root:wheel /var/log/rapid-mlx
+  sudo chown "${LLMSERVER_USER}:${LLMSERVER_USER}" /var/log/rapid-mlx
 
   # Resolve binary path (Homebrew vs pip install to different locations)
   RMLX_BIN=$(command -v rapid-mlx || echo "/opt/homebrew/bin/rapid-mlx")
@@ -333,7 +398,7 @@ ${NO_THINKING_ARG}
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>HOME</key><string>/var/root</string>
+    <key>HOME</key><string>${LLMSERVER_HOME}</string>
     <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     <key>RAPID_MLX_CACHE_DIR</key><string>${RMLX_CACHE}</string>
   </dict>
@@ -342,7 +407,7 @@ ${NO_THINKING_ARG}
   <key>StandardOutPath</key><string>/var/log/rapid-mlx/stdout.log</string>
   <key>StandardErrorPath</key><string>/var/log/rapid-mlx/stderr.log</string>
   <key>WorkingDirectory</key><string>/tmp</string>
-  <key>UserName</key><string>root</string>
+  <key>UserName</key><string>${LLMSERVER_USER}</string>
 </dict>
 </plist>
 PLIST
@@ -384,7 +449,8 @@ if [[ "$(echo "$CONFIG" | jq -r '.tools.mlx_lm.enabled')" == "true" ]]; then
   MLX_PYTHON=$(python3 -c "import sys; print(sys.executable)")
 
   sudo mkdir -p /var/log/mlx-lm "$MLX_MODEL_PATH"
-  sudo chown root:wheel /var/log/mlx-lm
+  sudo chown "${LLMSERVER_USER}:${LLMSERVER_USER}" /var/log/mlx-lm
+  sudo chown -R "${LLMSERVER_USER}:${LLMSERVER_USER}" "$MLX_MODEL_PATH"
 
   MLX_PLIST="/Library/LaunchDaemons/com.mlx-lm.server.plist"
   sudo tee "$MLX_PLIST" > /dev/null <<PLIST
@@ -405,7 +471,7 @@ if [[ "$(echo "$CONFIG" | jq -r '.tools.mlx_lm.enabled')" == "true" ]]; then
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>HOME</key><string>/var/root</string>
+    <key>HOME</key><string>${LLMSERVER_HOME}</string>
     <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin</string>
     <key>TRANSFORMERS_CACHE</key><string>${MLX_MODEL_PATH}</string>
   </dict>
@@ -414,7 +480,7 @@ if [[ "$(echo "$CONFIG" | jq -r '.tools.mlx_lm.enabled')" == "true" ]]; then
   <key>StandardOutPath</key><string>/var/log/mlx-lm/stdout.log</string>
   <key>StandardErrorPath</key><string>/var/log/mlx-lm/stderr.log</string>
   <key>WorkingDirectory</key><string>/tmp</string>
-  <key>UserName</key><string>root</string>
+  <key>UserName</key><string>${LLMSERVER_USER}</string>
 </dict>
 </plist>
 PLIST
@@ -458,7 +524,7 @@ if [[ "$(echo "$CONFIG" | jq -r '.tools.infinity.enabled')" == "true" ]]; then
   INF_PYTHON=$(python3 -c "import sys; print(sys.executable)")
 
   sudo mkdir -p /var/log/infinity
-  sudo chown root:wheel /var/log/infinity
+  sudo chown "${LLMSERVER_USER}:${LLMSERVER_USER}" /var/log/infinity
 
   INF_PLIST="/Library/LaunchDaemons/com.infinity.server.plist"
   sudo tee "$INF_PLIST" > /dev/null <<PLIST
@@ -483,7 +549,7 @@ if [[ "$(echo "$CONFIG" | jq -r '.tools.infinity.enabled')" == "true" ]]; then
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>HOME</key><string>/var/root</string>
+    <key>HOME</key><string>${LLMSERVER_HOME}</string>
     <key>PATH</key><string>/usr/local/bin:/usr/bin:/bin</string>
   </dict>
   <key>RunAtLoad</key><true/>
@@ -491,7 +557,7 @@ if [[ "$(echo "$CONFIG" | jq -r '.tools.infinity.enabled')" == "true" ]]; then
   <key>StandardOutPath</key><string>/var/log/infinity/stdout.log</string>
   <key>StandardErrorPath</key><string>/var/log/infinity/stderr.log</string>
   <key>WorkingDirectory</key><string>/tmp</string>
-  <key>UserName</key><string>root</string>
+  <key>UserName</key><string>${LLMSERVER_USER}</string>
 </dict>
 </plist>
 PLIST

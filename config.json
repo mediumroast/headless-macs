@@ -63,7 +63,7 @@
     "power_mode": 2
   },
   "network": {
-    "localhost_only": false,
-    "disable_firewall": true
+    "localhost_only": true,
+    "disable_firewall": false
   }
 }

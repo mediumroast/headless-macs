@@ -5,7 +5,7 @@
 | Issue | Affects | Symptom | Fix |
 |---|---|---|---|
 | **FileVault enabled** | All Macs | Headless reboots hang at password prompt — machine is unreachable | System Settings → Privacy & Security → FileVault → Turn Off. Cannot be scripted. |
-| **`panic: $HOME is not defined`** | All Macs, all macOS | Ollama / mlx-lm / Infinity daemon crashes immediately on start | `HOME=/var/root` is set in every LaunchDaemon plist by `install-tools.sh`. If you write your own plist, always include it. |
+| **`panic: $HOME is not defined`** | All Macs, all macOS | Ollama / mlx-lm / Infinity daemon crashes immediately on start | `HOME=/Library/LLMServer` is set in every LaunchDaemon plist by `install-tools.sh`. Daemons run as the `_llmserver` service account (not root). If you write your own plist, always include `HOME` pointing to that account's home directory. |
 | **MacBook sleeps on lid close** | MacBooks only | Machine becomes unreachable when lid is closed | Purchase an HDMI or USB-C dummy plug (recommended). Alternative: `sudo pmset -a lidwake 0` — thermal risk if vents are blocked. |
 
 ---
@@ -14,7 +14,7 @@
 
 | Issue | Affects | Symptom | Fix |
 |---|---|---|---|
-| **pmset values reset after macOS update** | macOS 26 Tahoe | Machine starts sleeping again after an update | Re-run `sudo ./setup.sh` after any macOS update. The caffeinate LaunchDaemon mitigates sleep regression but doesn't reset pmset. |
+| **pmset values reset after macOS update** | macOS 26 Tahoe | Machine starts sleeping again after an update | Handled automatically by the `com.llm-server.pmset-heal` daily timer installed by `setup.sh` (runs at 03:00). Manual re-run `sudo ./setup.sh` also works. |
 | **SIP blocks persistent service disabling** | macOS 15+ with SIP on | `launchctl disable` appears to succeed but service restarts after reboot | Disable SIP in Recovery Mode: boot → Terminal → `csrutil disable`. `setup.sh` warns and continues safely with SIP on. |
 | **`launchctl load` / `unload` deprecated** | macOS 26 Tahoe | Commands silently fail or behave incorrectly | Use `launchctl bootstrap system <plist>` and `launchctl bootout system <plist>`. All scripts in this repo use the correct commands. |
 | **Sequoia 15.3+ sleep regression** | macOS 15.3+ | Machine sleeps despite pmset settings | The caffeinate LaunchDaemon (`com.llm-server.caffeinate`) installed by `setup.sh` is the safety net. Verify it's running: `sudo launchctl print system/com.llm-server.caffeinate` |
@@ -29,8 +29,9 @@
 |---|---|---|---|
 | **Ollama login item conflicts with daemon** | All Macs | Two Ollama processes running; port conflicts; daemon fails to start | `install-tools.sh` removes the login item automatically via `osascript`. If still present: System Settings → General → Login Items → remove Ollama. |
 | **SIP blocks `/usr/share` writes** | macOS 15+ | Permission denied when writing to system paths | Use `/Library` for models and config. All plists in this repo use `/Library/Ollama/models`. |
-| **Models stored in `~/.ollama` instead of configured dir** | All Macs | `OLLAMA_MODELS` env var ignored | `HOME=/var/root` must be set alongside `OLLAMA_MODELS` in the plist. Without `HOME`, Ollama ignores `OLLAMA_MODELS` and falls back to `~/.ollama` of the running user. |
+| **Models stored in `~/.ollama` instead of configured dir** | All Macs | `OLLAMA_MODELS` env var ignored | `HOME=/Library/LLMServer` must be set alongside `OLLAMA_MODELS` in the plist. Without `HOME`, Ollama ignores `OLLAMA_MODELS` and falls back to `~/.ollama` of the running user. |
 | **Ollama app vs daemon conflict** | All Macs | Port 11434 already in use when daemon starts | Stop the app: `pkill -f "Ollama.app"`. Remove login item. Run only the daemon installed by `install-tools.sh`. |
+| **Updating Ollama binary doesn't restart daemon** | All Macs | New binary installed but daemon still serves old version | Use `sudo ./update-tools.sh ollama` — stops the daemon, runs the upstream installer, removes any re-added login item, and re-bootstraps the daemon. |
 
 ---
 

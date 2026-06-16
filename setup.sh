@@ -142,7 +142,7 @@ echo ""
 
 # Core sleep prevention
 pmset_apply sleep         0
-pmset_apply disablesleep  1    # macOS 26 Tahoe primary mechanism
+pmset_apply disablesleep  1    # UPS sleep prevention; may not apply on all hardware
 pmset_apply disksleep     0
 pmset_apply standby       0
 pmset_apply autopoweroff  0
@@ -157,9 +157,8 @@ pmset_apply tcpkeepalive  1    # Keep SSH alive during long inference
 # Display — can sleep on a headless machine
 pmset_apply displaysleep  10
 
-# Performance mode — read from config (default: 2 = High Performance)
-POWER_MODE=$(echo "$CONFIG" | jq -r '.system.power_mode // 2')
-pmset_apply powermode "$POWER_MODE"
+# Performance mode — Apple Silicon uses highpowermode (0/1), not Intel's powermode (0/1/2)
+pmset_apply highpowermode 1
 
 # MacBook-specific: battery + AC sleep prevention, clamshell warning
 if echo "$HW_MODEL" | grep -qiE "MacBook"; then
@@ -461,9 +460,14 @@ echo ""
 SSHD_DROPIN_DIR="/etc/ssh/sshd_config.d"
 SSHD_DROPIN="$SSHD_DROPIN_DIR/100-headless.conf"
 
-# Enable SSH
-sudo systemsetup -setremotelogin on 2>/dev/null || true
-echo "[SET]  Remote Login (SSH) enabled"
+# Enable SSH — systemsetup is deprecated on macOS 26+; use launchctl as primary
+if sudo launchctl enable system/com.openssh.sshd 2>/dev/null && \
+   sudo launchctl kickstart -k system/com.openssh.sshd 2>/dev/null; then
+  echo "[SET]  Remote Login (SSH) enabled via launchctl"
+else
+  sudo systemsetup -setremotelogin on 2>/dev/null || true
+  echo "[SET]  Remote Login (SSH) enabled via systemsetup"
+fi
 
 # Check for an authorized_keys file before disabling password auth
 AUTHORIZED_KEYS_FOUND=false

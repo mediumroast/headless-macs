@@ -130,7 +130,7 @@ ensure_llmserver_user() {
 
   # Group — create only if not already present
   if dscl . -read "/Groups/$LLMSERVER_USER" PrimaryGroupID &>/dev/null 2>&1; then
-    uid=$(dscl . -read "/Groups/$LLMSERVER_USER" PrimaryGroupID 2>/dev/null | awk '{print $2}')
+    uid=$(dscl . -read "/Groups/$LLMSERVER_USER" PrimaryGroupID 2>/dev/null | grep -oE '[0-9]+' | head -1)
     echo "[SKIP] $LLMSERVER_USER group already exists (GID $uid)"
   else
     local used_ids

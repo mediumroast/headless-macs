@@ -74,12 +74,13 @@ See [`docs/tool-comparison.md`](docs/tool-comparison.md) for a full comparison.
 
 | Mac Model | RAM | Recommended Config |
 |---|---|---|
-| MacBook Air M3 | 16 GB | 7B Q8 · 1 model at a time |
-| MacBook Air M3 | 24 GB | 13B Q8 or 7B Q8 + embeddings |
-| MacBook Pro M4 | 32 GB | 32B Q4 or 13B Q8 · 2 models |
-| Mac Mini M4 | 64 GB | 70B Q4 or 32B Q5 · 3 models |
-| Mac Mini / Studio M4 Max | 128 GB | 70B Q8 or 32B Q8 + 70B Q4 · 3–4 models |
-| Mac Studio M4 Ultra | 192 GB | 405B Q4 · multiple large models |
+| MacBook Air M3/M4 | 16 GB | `qwen3:8b` (5 GB) · 1 model at a time |
+| MacBook Air M3 / Mac Mini M4 | 24 GB | `qwen3:14b` or `qwen3-coder:30b` (19 GB MoE) |
+| MacBook Pro M4 / Mac Mini M4 Pro | 32 GB | `qwen3:32b` (20 GB) or `deepseek-r1:32b` · 2 models |
+| Mac Mini M4 Max / Mac Studio M4 Max | 64 GB | `llama3.3:70b` Q4 (43 GB) or `deepseek-r1:70b` · 3 models |
+| Mac Mini / Studio M4 Max (Mac16,9) | 128 GB | `llama3.3:70b` Q8 (86 GB) or `qwen3.5:122b` Q4 (81 GB) |
+| Mac Studio M4 Ultra | 192 GB | `qwen3:235b` Q4 (142 GB) · multiple large models simultaneously |
+| Mac Pro M2 Ultra | 192 GB | Same as Studio M4 Ultra |
 
 `install-tools.sh` automatically tunes Ollama's `MAX_LOADED_MODELS`, `NUM_PARALLEL`, and `MAX_CONTEXT` based on detected RAM. See [`docs/ram-sizing.md`](docs/ram-sizing.md).
 
@@ -235,15 +236,22 @@ Prompts for confirmation before making changes. Recommends a reboot when done.
 # Check what models suit your hardware
 ./precheck.sh | grep -A10 "MODEL CAPABILITY"
 
-# Pull a model
-ollama pull qwen2.5-coder:7b-instruct-q8_0
+# Pull a model — examples by RAM tier:
+ollama pull qwen3:8b               # 16 GB — best general at this size
+ollama pull qwen3:14b              # 24 GB — fast, 128K context
+ollama pull qwen3-coder:30b        # 24 GB+ — best local coding model (MoE, 19 GB)
+ollama pull qwen3:32b              # 32 GB — top dense model at tier
+ollama pull llama3.3:70b           # 64 GB+ — excellent general-purpose 70B
+ollama pull deepseek-r1:70b        # 64 GB+ — leading open reasoning model
 
 # Test inference
-ollama run qwen2.5-coder:7b-instruct-q8_0 "write hello world in python"
+ollama run qwen3:8b "write hello world in python"
 
 # Verify the stack
 ./verify.sh
 ```
+
+See [`docs/ram-sizing.md`](docs/ram-sizing.md) for full model recommendations by hardware tier.
 
 ### Register production Modelfiles
 

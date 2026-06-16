@@ -20,13 +20,12 @@ Override any value in `config.json` under `tools.ollama`.
 
 | Mac Model | RAM | Practical Capability |
 |---|---|---|
-| MacBook Air M3 | 16 GB | 7B Q8 only; 1 model at a time |
-| MacBook Air M3 | 24 GB | 13B Q8 or 7B Q8 + embeddings |
-| MacBook Pro M4 | 32 GB | 32B Q4 or 13B Q8; 2 models |
-| Mac Mini M4 | 64 GB | 70B Q4 or 32B Q5; 3 models |
-| Mac Mini M4 Max (Mac16,9) | 128 GB | 70B Q8 comfortable; 32B Q8 + 70B Q4 simultaneously; ~22–25 tok/s on 70B |
-| Mac Studio M4 Max | 128 GB | Same as Mac Mini M4 Max 128 GB |
-| Mac Studio M4 Ultra | 192 GB | 405B Q4; multiple large models |
+| MacBook Air M3/M4 | 16 GB | 8B Q4 (qwen3:8b); 1 model at a time |
+| MacBook Air M3 / Mac Mini M4 | 24 GB | 14B Q4 (qwen3:14b) or 30B MoE Q4 (qwen3-coder:30b) |
+| MacBook Pro M4 / Mac Mini M4 Pro | 32 GB | 32B Q4 (qwen3:32b, deepseek-r1:32b); 2 models |
+| Mac Mini M4 Max / Mac Studio M4 Max | 64 GB | 70B Q4 (llama3.3:70b, deepseek-r1:70b); 32B Q8 alongside |
+| Mac Mini / Studio M4 Max (Mac16,9) | 128 GB | 70B Q8 or 122B Q4 (qwen3.5:122b); 70B Q4 + 32B Q8 pair; ~22–25 tok/s on 70B |
+| Mac Studio M4 Ultra | 192 GB | 235B Q4 (qwen3:235b, 142 GB); multiple 70B models simultaneously |
 | Mac Pro M2 Ultra | 192 GB | Same as Studio Ultra |
 
 ---
@@ -40,10 +39,14 @@ Override any value in `config.json` under `tools.ollama`.
 | 8B | ~5 GB | ~6 GB | ~9 GB | ~16 GB |
 | 13B | ~8 GB | ~10 GB | ~14 GB | ~26 GB |
 | 14B | ~9 GB | ~11 GB | ~15 GB | ~28 GB |
+| 30B MoE¹ | ~19 GB | ~22 GB | ~38 GB | ~60 GB |
 | 32B | ~20 GB | ~24 GB | ~35 GB | ~64 GB |
 | 70B | ~40 GB | ~48 GB | ~75 GB | ~140 GB |
 | 72B | ~41 GB | ~49 GB | ~77 GB | ~144 GB |
-| 405B | ~230 GB | — | — | — |
+| 122B | ~81 GB | — | — | — |
+| 235B MoE¹ | ~142 GB | — | — | — |
+
+¹ MoE models have large total parameter counts but small active parameter counts per token. Memory for weights is determined by total parameters; compute is determined by active parameters. `qwen3-coder:30b` and `qwen3:235b` are both MoE.
 
 **Rule of thumb:** leave ~4 GB for macOS overhead and budget for KV cache (see below). On a 64 GB machine, your usable model budget is well under 60 GB at large context windows.
 
@@ -51,79 +54,127 @@ Override any value in `config.json` under `tools.ollama`.
 
 ## Recommended Models by Hardware
 
-### 16 GB (e.g. MacBook Air M3 base)
+Model families current as of mid-2026. Qwen3/Qwen3-Coder supersede Qwen2.5/Qwen2.5-Coder.
+Llama 3.3 70B remains the best general dense model at the 64 GB tier. DeepSeek-R1 (0528)
+is the leading open reasoning model at every size. Llama 3.x and Qwen2.5 pull commands
+still work but pull older-generation weights.
+
+### 16 GB (e.g. MacBook Air M3/M4 base)
 
 ```bash
-# Generation — one at a time
-ollama pull qwen2.5-coder:7b-instruct-q8_0    # 8 GB — coding
-ollama pull llama3.2:3b-instruct-q8_0         # 3.5 GB — fast general
+# General chat
+ollama pull qwen3:8b                   # 5.2 GB — best general at this tier; thinking mode on demand
 
-# Embeddings (sideload alongside generation model)
-ollama pull nomic-embed-text                   # ~275 MB
+# Coding
+ollama pull qwen2.5-coder:7b           # 4.4 GB — top HumanEval score at 7B class
+
+# Reasoning / chain-of-thought
+ollama pull deepseek-r1:8b             # 5.2 GB — 0528 distill; strong math and logic
+
+# Embeddings (sideload alongside any generation model)
+ollama pull nomic-embed-text           # 274 MB — most popular, best default
 ```
 
 ### 24 GB (e.g. MacBook Air M3 / Mac Mini M4 base)
 
 ```bash
-# Generation
-ollama pull qwen2.5-coder:7b-instruct-q8_0    # 8 GB
-ollama pull llama3.1:8b-instruct-q8_0         # 9 GB
+# General chat
+ollama pull qwen3:14b                  # 9.3 GB — fast, capable, 128K context
+
+# Coding + agentic tasks (MoE: 30B params, only 3.3B active — efficient)
+ollama pull qwen3-coder:30b            # 19 GB — 256K context; best local coding model
+
+# Reasoning
+ollama pull deepseek-r1:14b            # 9.0 GB — best mid-range reasoning
+
+# Vision (text + image)
+ollama pull gemma4:27b                 # 17 GB — vision, tool use, and thinking mode
 
 # Embeddings
-ollama pull mxbai-embed-large                  # ~670 MB
+ollama pull mxbai-embed-large          # 670 MB — matches OpenAI ada-002 quality
 ```
 
-### 32 GB (e.g. MacBook Pro M4)
+### 32 GB (e.g. MacBook Pro M4 / Mac Mini M4 Pro)
 
 ```bash
-# Generation
-ollama pull qwen2.5-coder:32b-instruct-q4_K_M  # ~20 GB — best coding at this tier
-ollama pull qwen2.5:14b-instruct-q8_0          # ~15 GB — general
+# General chat
+ollama pull qwen3:32b                  # 20 GB — top dense model at this tier
+
+# Coding (pick one — both fit)
+ollama pull qwen3-coder:30b            # 19 GB — agentic coding, 256K context
+ollama pull qwen2.5-coder:32b          # 20 GB — 92.7% HumanEval; best pure coding
+
+# Reasoning
+ollama pull deepseek-r1:32b            # 20 GB — best local reasoning at this tier
 
 # Embeddings
-ollama pull mxbai-embed-large
+ollama pull mxbai-embed-large          # 670 MB
 ```
 
-### 64 GB (e.g. Mac Mini M4 Pro / Mac Studio M4 Max)
+### 64 GB (e.g. Mac Mini M4 Max / Mac Studio M4 Max)
 
 ```bash
-# Generation
-ollama pull qwen2.5:72b-instruct-q4_K_M        # ~41 GB — large general
-ollama pull qwen2.5-coder:32b-instruct-q5_K_M  # ~24 GB — coding
-ollama pull deepseek-r1:32b-q5_K_M             # ~24 GB — reasoning
+# General chat
+ollama pull llama3.3:70b               # 43 GB — 128K context; excellent instruction following
+
+# Coding
+ollama pull qwen3-coder:30b            # 38 GB at Q8 — best agentic coding quality here
+ollama pull qwen2.5-coder:32b          # 40 GB at Q8 — top HumanEval score
+
+# Reasoning
+ollama pull deepseek-r1:70b            # 43 GB — best local reasoning model available
+
+# Simultaneous pair: general + coding in memory at once
+# llama3.3:70b Q4 (~43 GB) + qwen3-coder:30b Q4 (~19 GB) = ~62 GB — comfortable
 
 # Embeddings + reranking (via Infinity)
-# michaelfeil/bge-small-en-v1.5 — fast, low memory
-# BAAI/bge-large-en-v1.5        — higher quality
+ollama pull bge-m3                     # 570 MB — multilingual, 8K context
 ```
 
 ### 128 GB (e.g. Mac Mini M4 Max, Mac Studio M4 Max — Mac16,9)
 
+Run 70B-class models at Q8 (near-lossless). This is the sweet spot for this tier — Q8/70B
+outperforms Q3/235B on most benchmarks. `qwen3:235b` (142 GB at Q4) does **not** fit here.
+
 ```bash
-# Generation — 70B Q8 is the sweet spot at this tier
-ollama pull qwen2.5:72b-instruct-q8_0          # ~77 GB — near-lossless quality
-ollama pull qwen2.5-coder:32b-instruct-q8_0    # ~35 GB — coding (fits alongside 70B Q4)
-ollama pull llama3.1:70b-instruct-q8_0         # ~75 GB
+# General chat
+ollama pull llama3.3:70b               # ~86 GB at Q8 — excellent quality; pin in memory
+ollama pull qwen3.5:122b               # ~81 GB at Q4 — vision + text, 256K context
 
-# Simultaneous pair: 70B Q4 (~43 GB) + 32B Q8 (~35 GB) = ~78 GB — comfortable
-ollama pull qwen2.5:72b-instruct-q4_K_M
-ollama pull qwen2.5-coder:32b-instruct-q8_0
+# Coding
+ollama pull qwen3-coder:30b            # ~38 GB at Q8 — agentic; pair alongside 70B
+ollama pull qwen2.5-coder:32b          # ~40 GB at Q8 — pure coding quality
 
-# Embeddings (always fits alongside generation at this tier)
-# BAAI/bge-large-en-v1.5 or mxbai-embed-large via Infinity
+# Reasoning
+ollama pull deepseek-r1:70b            # ~86 GB at Q8 — best reasoning on a single node
+
+# Simultaneous pair: two models resident at once
+# llama3.3:70b Q4 (~43 GB) + qwen2.5-coder:32b Q8 (~40 GB) = ~83 GB — comfortable
+# llama3.3:70b Q8 (~86 GB) alone, evicts on second large model request
+
+# Embeddings
+ollama pull bge-m3                     # 570 MB
 ```
 
-Note: 405B Q4 requires ~230 GB and does **not** fit at 128 GB. Use the 192 GB M4 Ultra tier for that.
-
-### 192 GB+ (e.g. Mac Studio M4 Ultra)
+### 192 GB (e.g. Mac Studio M4 Ultra)
 
 ```bash
-# Generation
-ollama pull qwen2.5:72b-instruct-q8_0          # ~77 GB — best single-node quality
-ollama pull qwen2.5-coder:32b-instruct-q8_0    # ~35 GB — coding
+# General chat — flagship local model
+ollama pull qwen3:235b                 # 142 GB at Q4 — best openly-available general model
 
-# 405B fits at Q4 on this tier (~230 GB — leave OS headroom, close call)
-# Multiple large models loaded simultaneously
+# Coding
+ollama pull qwen3-coder:30b            # 38 GB at Q8 — run alongside qwen3:235b
+ollama pull qwen2.5-coder:32b          # 40 GB at Q8
+
+# Reasoning
+ollama pull deepseek-r1:70b            # 86 GB at Q8 — run alongside a 32B coding model
+
+# Multiple large models simultaneously:
+# qwen3:235b Q4 (142 GB) + qwen3-coder:30b Q8 (38 GB) = ~180 GB — tight but fits
+# llama3.3:70b Q8 (86 GB) + deepseek-r1:70b Q8 (86 GB) = ~172 GB — comfortable
+
+# Embeddings
+ollama pull bge-m3                     # 570 MB
 ```
 
 ---

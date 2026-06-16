@@ -124,25 +124,32 @@ LLMSERVER_USER="_llmserver"
 LLMSERVER_HOME="/Library/LLMServer"
 
 ensure_llmserver_user() {
-  # Find an available UID in the custom service account range (400-499),
-  # or re-use the existing group's GID if the group was already created.
   local uid=""
 
-  # Group — create only if not already present
-  if dscl . -read "/Groups/$LLMSERVER_USER" PrimaryGroupID &>/dev/null 2>&1; then
-    uid=$(dscl . -read "/Groups/$LLMSERVER_USER" PrimaryGroupID 2>/dev/null | grep -oE '[0-9]+' | head -1)
+  # --- Group ---
+  # Read existing GID if the group record exists and is valid
+  uid=$(dscl . -read "/Groups/$LLMSERVER_USER" PrimaryGroupID 2>/dev/null | grep -oE '[0-9]+' | head -1)
+
+  if [[ -n "$uid" ]]; then
     echo "[SKIP] $LLMSERVER_USER group already exists (GID $uid)"
   else
+    # Group either doesn't exist or has a broken/empty GID. Remove it if present
+    # so we can recreate it cleanly, then pick a free ID.
+    if dscl . -list "/Groups/$LLMSERVER_USER" &>/dev/null 2>&1; then
+      echo "[SET]  Removing broken $LLMSERVER_USER group (no valid GID)"
+      sudo dscl . -delete "/Groups/$LLMSERVER_USER" 2>/dev/null || true
+    fi
+
     local used_ids
-    used_ids=$(dscl . -list /Users UniqueID 2>/dev/null | awk '{print $2}')
+    used_ids=$(dscl . -list /Groups PrimaryGroupID 2>/dev/null | awk '{print $2}')
+    used_ids+=$'\n'$(dscl . -list /Users UniqueID 2>/dev/null | awk '{print $2}')
     for candidate in $(seq 400 499); do
-      if ! echo "$used_ids" | grep -qx "$candidate"; then
-        uid="$candidate"
-        break
+      if ! printf '%s\n' "$used_ids" | grep -qx "$candidate"; then
+        uid="$candidate"; break
       fi
     done
     if [[ -z "$uid" ]]; then
-      echo "[FAIL] No available UID in range 400-499 for $LLMSERVER_USER"
+      echo "[FAIL] No available ID in range 400-499 for $LLMSERVER_USER"
       exit 1
     fi
     sudo dscl . -create "/Groups/$LLMSERVER_USER"
@@ -152,10 +159,19 @@ ensure_llmserver_user() {
     echo "[SET]  $LLMSERVER_USER group created (GID $uid)"
   fi
 
-  # User — create only if not already present
-  if dscl . -read "/Users/$LLMSERVER_USER" UniqueID &>/dev/null 2>&1; then
-    echo "[SKIP] $LLMSERVER_USER user already exists (UID $(id -u "$LLMSERVER_USER" 2>/dev/null || echo $uid))"
+  # --- User ---
+  # Check for a valid existing user record
+  local existing_uid
+  existing_uid=$(dscl . -read "/Users/$LLMSERVER_USER" UniqueID 2>/dev/null | grep -oE '[0-9]+' | head -1)
+
+  if [[ -n "$existing_uid" ]]; then
+    echo "[SKIP] $LLMSERVER_USER user already exists (UID $existing_uid)"
   else
+    # User either doesn't exist or has a broken/empty UID. Remove if present.
+    if dscl . -list "/Users/$LLMSERVER_USER" &>/dev/null 2>&1; then
+      echo "[SET]  Removing broken $LLMSERVER_USER user (no valid UID)"
+      sudo dscl . -delete "/Users/$LLMSERVER_USER" 2>/dev/null || true
+    fi
     sudo dscl . -create "/Users/$LLMSERVER_USER"
     sudo dscl . -create "/Users/$LLMSERVER_USER" UserShell /usr/bin/false
     sudo dscl . -create "/Users/$LLMSERVER_USER" RealName "LLM Server"
@@ -164,11 +180,11 @@ ensure_llmserver_user() {
     sudo dscl . -create "/Users/$LLMSERVER_USER" NFSHomeDirectory "$LLMSERVER_HOME"
     sudo dscl . -create "/Users/$LLMSERVER_USER" Password "*"
     sudo dscl . -create "/Users/$LLMSERVER_USER" IsHidden 1
-    dscacheutil -flushcache 2>/dev/null || true
+    sudo dscacheutil -flushcache 2>/dev/null || true
     echo "[SET]  $LLMSERVER_USER user created (UID $uid)"
   fi
 
-  # Home directory — create/fix ownership regardless
+  # Home directory — always ensure correct ownership
   sudo mkdir -p "$LLMSERVER_HOME"
   sudo chown "${LLMSERVER_USER}:${LLMSERVER_USER}" "$LLMSERVER_HOME"
   sudo chmod 750 "$LLMSERVER_HOME"

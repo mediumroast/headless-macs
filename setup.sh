@@ -157,8 +157,8 @@ pmset_apply tcpkeepalive  1    # Keep SSH alive during long inference
 # Display — can sleep on a headless machine
 pmset_apply displaysleep  10
 
-# Performance mode — Apple Silicon uses highpowermode (0/1), not Intel's powermode (0/1/2)
-pmset_apply highpowermode 1
+# High Performance Mode on Apple Silicon is not settable via pmset on macOS 26 Tahoe.
+# Enable it manually: System Settings → Battery → Options → High Power Mode
 
 # MacBook-specific: battery + AC sleep prevention, clamshell warning
 if echo "$HW_MODEL" | grep -qiE "MacBook"; then

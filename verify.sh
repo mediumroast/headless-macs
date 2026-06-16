@@ -125,7 +125,6 @@ check_pmset "standby"       "0"
 check_pmset "womp"          "1"
 check_pmset "tcpkeepalive"  "1"
 check_pmset "autorestart"   "1"
-check_pmset "highpowermode" "1"
 
 # Caffeinate daemon
 if sudo launchctl print "system/com.llm-server.caffeinate" 2>/dev/null | grep -q "state = running"; then

@@ -291,7 +291,7 @@ These are real gotchas. Do not "fix" or remove these guards — they exist becau
 - **`/etc/sysctl.conf` is ignored at boot since Catalina.** Persist sysctl settings with a `RunAtLoad` LaunchDaemon instead.
 - **`net.inet.tcp.rfc1323` was removed in El Capitan.** Do not add it to the sysctl tuning set.
 - **`serverperfmode` is Intel-only.** It silently breaks on Apple Silicon. Do not add it.
-- **`powermode` (0/1/2) is Intel-only.** Apple Silicon uses `highpowermode` (0/1). Use `pmset -a highpowermode 1` for High Performance Mode. Using `powermode` on Apple Silicon is silently accepted but never appears in `pmset -g`.
+- **`powermode` (0/1/2) is Intel-only.** Apple Silicon has no equivalent pmset key — `highpowermode` does not exist on macOS 26 Tahoe either. High Performance Mode must be set via System Settings → Battery → Options → High Power Mode. Do not add any powermode variant to setup.sh.
 - **`systemsetup -setremotelogin` is broken on macOS 26 Tahoe.** Use `launchctl enable system/com.openssh.sshd && launchctl kickstart -k system/com.openssh.sshd` as the primary method, with `systemsetup` as a fallback.
 - **`launchctl load` / `launchctl unload` are deprecated in macOS 15+.** They may silently fail or misbehave. Use `bootstrap`/`bootout` exclusively.
 - **`HOME` must be set in every daemon plist.** Ollama, mlx-lm, and Infinity all panic with `panic: $HOME is not defined` if HOME is absent. Set it to `/Library/LLMServer` (the `_llmserver` service account home). This is not fixable at the app level — it must be in the plist.

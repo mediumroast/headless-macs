@@ -214,16 +214,47 @@ if [[ "$(echo "$CONFIG" | jq -r '.tools.ollama.enabled')" == "true" ]]; then
     echo "[WARN] Could not verify ARM64 support for $OLLAMA_BIN"
   fi
 
-  # Remove conflicting Ollama login item / app instance
+  # Stop all user-level Ollama instances before installing the system daemon.
+  # The Ollama.app holds port 11434 and will conflict if left running.
+
+  # 1. Remove login item so it doesn't restart on next login
   osascript -e 'tell application "System Events" to delete login item "Ollama"' \
     2>/dev/null || true
-  pkill -f "Ollama.app" 2>/dev/null || true
 
-  # Stop any Homebrew-managed Ollama service — it holds port 11434 and conflicts
-  # with our LaunchDaemon
+  # 2. Gracefully quit the menu bar app, then force-kill if still alive
+  osascript -e 'quit app "Ollama"' 2>/dev/null || true
+  sleep 1
+  killall Ollama 2>/dev/null || true
+  killall ollama 2>/dev/null || true
+
+  # 3. Remove any LaunchAgent the Ollama installer dropped in the user's home
+  for agent in \
+      "$HOME/Library/LaunchAgents/com.ollama.ollama.plist" \
+      "$HOME/Library/LaunchAgents/ollama.plist"; do
+    if [[ -f "$agent" ]]; then
+      launchctl bootout "gui/$(id -u)" "$agent" 2>/dev/null || true
+      rm -f "$agent"
+      echo "[SET]  Removed user LaunchAgent: $agent"
+    fi
+  done
+
+  # 4. Stop any Homebrew-managed Ollama service — it also holds port 11434
   if brew services list 2>/dev/null | grep -q "^ollama"; then
     brew services stop ollama 2>/dev/null || true
     echo "[SET]  Stopped Homebrew Ollama service (our LaunchDaemon takes over)"
+  fi
+
+  # 5. Wait for port 11434 to be free before loading daemon
+  for i in $(seq 1 10); do
+    if ! lsof -iTCP:11434 -sTCP:LISTEN &>/dev/null 2>&1; then
+      break
+    fi
+    echo "[INFO] Waiting for port 11434 to clear... ($i/10)"
+    sleep 2
+  done
+  if lsof -iTCP:11434 -sTCP:LISTEN &>/dev/null 2>&1; then
+    echo "[WARN] Port 11434 still in use — daemon may fail to bind"
+    lsof -iTCP:11434 -sTCP:LISTEN 2>/dev/null || true
   fi
 
   # --- Models directory ---

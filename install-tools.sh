@@ -128,7 +128,7 @@ ensure_llmserver_user() {
 
   # --- Group ---
   # Read existing GID if the group record exists and is valid
-  uid=$(dscl . -read "/Groups/$LLMSERVER_USER" PrimaryGroupID 2>/dev/null | grep -oE '[0-9]+' | head -1)
+  uid=$(dscl . -read "/Groups/$LLMSERVER_USER" PrimaryGroupID 2>/dev/null | grep -oE '[0-9]+' | head -1) || true
 
   if [[ -n "$uid" ]]; then
     echo "[SKIP] $LLMSERVER_USER group already exists (GID $uid)"
@@ -162,7 +162,7 @@ ensure_llmserver_user() {
   # --- User ---
   # Check for a valid existing user record
   local existing_uid
-  existing_uid=$(dscl . -read "/Users/$LLMSERVER_USER" UniqueID 2>/dev/null | grep -oE '[0-9]+' | head -1)
+  existing_uid=$(dscl . -read "/Users/$LLMSERVER_USER" UniqueID 2>/dev/null | grep -oE '[0-9]+' | head -1) || true
 
   if [[ -n "$existing_uid" ]]; then
     echo "[SKIP] $LLMSERVER_USER user already exists (UID $existing_uid)"

@@ -365,9 +365,10 @@ if [[ -n "$VOL_DEVICE" ]]; then
   <array>
     <string>/bin/sh</string>
     <string>-c</string>
-    <string>/bin/mkdir -p '${VOLUME_MOUNT}' &amp;&amp; /usr/sbin/diskutil mount -mountPoint '${VOLUME_MOUNT}' '${VOL_DEVICE}' &gt;/dev/null 2&gt;&amp;1 || true; /usr/sbin/diskutil enableOwnership '${VOLUME_MOUNT}' &gt;/dev/null 2&gt;&amp;1 || true</string>
+    <string>for i in 1 2 3 4 5 6 7 8 9 10 11 12; do /bin/mkdir -p '${VOLUME_MOUNT}'; /usr/sbin/diskutil mount -mountPoint '${VOLUME_MOUNT}' '${VOL_DEVICE}' &gt;/dev/null 2&gt;&amp;1 || true; /usr/sbin/diskutil enableOwnership '${VOLUME_MOUNT}' &gt;/dev/null 2&gt;&amp;1 || true; /sbin/mount | /usr/bin/grep -Fq " on ${VOLUME_MOUNT} " &amp;&amp; exit 0; /bin/sleep 10; done; exit 1</string>
   </array>
   <key>RunAtLoad</key><true/>
+  <key>StartInterval</key><integer>300</integer>
   <key>StandardOutPath</key><string>/var/log/mac-llm-setup/storage-mount.log</string>
   <key>StandardErrorPath</key><string>/var/log/mac-llm-setup/storage-mount.log</string>
 </dict>

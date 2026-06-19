@@ -41,7 +41,7 @@
     }
   },
   "storage": {
-    "use_external_volume": false,
+    "use_external_volume": true,
     "volume_label": "LLMStorage",
     "volume_mount_point": "",
     "models_subdir": "models",

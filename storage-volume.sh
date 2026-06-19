@@ -211,6 +211,7 @@ MLX_VOL_DIR="${MODEL_ROOT}/mlx-lm"
 INFINITY_VOL_DIR="${MODEL_ROOT}/infinity"
 EXO_VOL_DIR="${MODEL_ROOT}/exo"
 SHARED_GGUF_DIR="${MODEL_ROOT}/gguf"   # Raw .gguf files usable by Ollama and llama.cpp
+LLMSERVER_USER="_llmserver"
 
 for dir in \
   "$OLLAMA_VOL_DIR" \
@@ -227,9 +228,15 @@ for dir in \
   fi
 done
 
-sudo chown -R root:wheel "$MODEL_ROOT"
+if id "$LLMSERVER_USER" &>/dev/null 2>&1; then
+  sudo chown -R "${LLMSERVER_USER}:${LLMSERVER_USER}" "$MODEL_ROOT"
+  echo "[SET]  Ownership: ${LLMSERVER_USER}:${LLMSERVER_USER}"
+else
+  sudo chown -R root:wheel "$MODEL_ROOT"
+  echo "[WARN] _llmserver account not found; using root:wheel until install-tools.sh creates it"
+fi
 sudo chmod -R 755 "$MODEL_ROOT"
-echo "[OK]   Ownership: root:wheel, permissions: 755"
+echo "[OK]   Permissions: 755"
 
 # ===========================================================================
 # Section 4: Spotlight exclusion

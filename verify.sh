@@ -216,6 +216,58 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
+# STORAGE
+# ---------------------------------------------------------------------------
+echo "--- STORAGE ---"
+
+USE_EXTERNAL_VOLUME=$(echo "$CONFIG" | jq -r '.storage.use_external_volume // false')
+if [[ "$USE_EXTERNAL_VOLUME" == "true" ]]; then
+  STORAGE_LABEL=$(echo "$CONFIG" | jq -r '.storage.volume_label // "LLMStorage"')
+  STORAGE_MOUNT=$(echo "$CONFIG" | jq -r '.storage.volume_mount_point // empty')
+  SYMLINK_INTERNAL=$(echo "$CONFIG" | jq -r '.storage.symlink_internal_paths // true')
+  [[ -z "$STORAGE_MOUNT" ]] && STORAGE_MOUNT="/Volumes/${STORAGE_LABEL}"
+
+  if mount | grep -Fq " on ${STORAGE_MOUNT} "; then
+    _pass "External volume mounted at ${STORAGE_MOUNT}"
+  else
+    _fail "External volume not mounted at ${STORAGE_MOUNT}"
+    _info "Fix: sudo diskutil mount -mountPoint '${STORAGE_MOUNT}' '${STORAGE_LABEL}'"
+  fi
+
+  STORAGE_INFO=$(diskutil info "$STORAGE_LABEL" 2>/dev/null || diskutil info "$STORAGE_MOUNT" 2>/dev/null || true)
+  STORAGE_OWNERS=$(echo "$STORAGE_INFO" | awk -F': *' '/Owners/{print $2; exit}')
+  if [[ "$STORAGE_OWNERS" == "Enabled" ]]; then
+    _pass "External volume ownership enabled"
+  else
+    _fail "External volume ownership disabled"
+    _info "Fix: sudo diskutil enableOwnership '${STORAGE_MOUNT}'"
+  fi
+
+  if sudo launchctl print system/com.llm-server.storage-mount >/dev/null 2>&1; then
+    _pass "storage-mount LaunchDaemon installed"
+  else
+    _fail "storage-mount LaunchDaemon missing"
+    _info "Fix: sudo ./storage-volume.sh"
+  fi
+
+  if [[ "$SYMLINK_INTERNAL" == "true" ]]; then
+    if [[ -L "/Library/Ollama/models" ]]; then
+      _pass "/Library/Ollama/models symlink present"
+      _info "Target: $(readlink /Library/Ollama/models 2>/dev/null || echo unknown)"
+    else
+      _fail "/Library/Ollama/models is not symlinked to external storage"
+      _info "Fix: sudo ./storage-volume.sh"
+    fi
+  else
+    _skip "Internal /Library symlink wiring disabled in config.json"
+  fi
+else
+  _skip "External storage disabled in config.json"
+fi
+
+echo ""
+
+# ---------------------------------------------------------------------------
 # OLLAMA
 # ---------------------------------------------------------------------------
 echo "--- OLLAMA ---"

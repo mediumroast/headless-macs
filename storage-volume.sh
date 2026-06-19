@@ -93,6 +93,9 @@ echo "Section 1: Locate Volume '$VOLUME_LABEL'"
 echo "========================================"
 echo ""
 
+EXPECTED_MOUNT="/Volumes/${VOLUME_LABEL}"
+VOL_DEVICE=""
+VOL_UUID=""
 VOLUME_MOUNT=""
 
 # Fast path: use precheck JSON if available and fresh
@@ -106,13 +109,27 @@ if [[ -f "$PRECHECK_JSON" ]]; then
   fi
 fi
 
-# Live fallback: ask diskutil directly
+# Live fallback: ask diskutil directly and mount the volume if it exists but
+# is not currently attached at its expected path.
 if [[ -z "$VOLUME_MOUNT" ]]; then
-  VOLUME_MOUNT=$(diskutil info "$VOLUME_LABEL" 2>/dev/null \
-    | awk -F': ' '/Mount Point/{gsub(/^[[:space:]]+/,"",$2); print $2}')
+  VOL_INFO=$(diskutil info "$VOLUME_LABEL" 2>/dev/null || true)
+  VOL_DEVICE=$(echo "$VOL_INFO" | awk -F': *' '/Device Identifier/{print $2; exit}')
+  VOL_UUID=$(echo "$VOL_INFO" | awk -F': *' '/Volume UUID/{print $2; exit}')
+  VOLUME_MOUNT=$(echo "$VOL_INFO" | awk -F': *' '/Mount Point/{print $2; exit}')
+
+  if [[ -n "$VOL_DEVICE" && ( -z "$VOLUME_MOUNT" || "$VOLUME_MOUNT" == "Not mounted" || "$VOLUME_MOUNT" == "(null)" ) ]]; then
+    echo "[INFO] Volume '$VOLUME_LABEL' found as $VOL_DEVICE but not mounted"
+    sudo mkdir -p "$EXPECTED_MOUNT"
+    if sudo diskutil mount -mountPoint "$EXPECTED_MOUNT" "$VOL_DEVICE" >/dev/null 2>&1; then
+      VOLUME_MOUNT="$EXPECTED_MOUNT"
+      echo "[SET]  Mounted '$VOLUME_LABEL' at $VOLUME_MOUNT"
+    else
+      echo "[WARN] diskutil could not mount '$VOLUME_LABEL' at $EXPECTED_MOUNT"
+    fi
+  fi
 fi
 
-if [[ -z "$VOLUME_MOUNT" || "$VOLUME_MOUNT" == "(null)" || ! -d "$VOLUME_MOUNT" ]]; then
+if [[ -z "$VOLUME_MOUNT" || "$VOLUME_MOUNT" == "Not mounted" || "$VOLUME_MOUNT" == "(null)" || ! -d "$VOLUME_MOUNT" ]]; then
   echo "ERROR: No volume with label '$VOLUME_LABEL' found or not mounted."
   echo ""
   echo "To prepare an external drive:"
@@ -136,6 +153,12 @@ echo "========================================"
 echo "Section 2: Validate Volume"
 echo "========================================"
 echo ""
+
+if [[ -z "$VOL_DEVICE" || -z "$VOL_UUID" ]]; then
+  VOL_INFO=$(diskutil info "$VOLUME_MOUNT" 2>/dev/null || true)
+  [[ -z "$VOL_DEVICE" ]] && VOL_DEVICE=$(echo "$VOL_INFO" | awk -F': *' '/Device Identifier/{print $2; exit}')
+  [[ -z "$VOL_UUID"   ]] && VOL_UUID=$(echo "$VOL_INFO" | awk -F': *' '/Volume UUID/{print $2; exit}')
+fi
 
 # Free space check
 VOL_FREE_GB=$(df -g "$VOLUME_MOUNT" 2>/dev/null | awk 'NR==2{print $4}')
@@ -162,6 +185,15 @@ if echo "$VOL_FS" | grep -qiE "exfat|fat32|msdos|ntfs"; then
   exit 1
 fi
 echo "[OK]   Filesystem: $VOL_FS (APFS or HFS+ — permissions supported)"
+
+VOL_OWNERS=$(diskutil info "$VOLUME_MOUNT" 2>/dev/null \
+  | awk -F': *' '/Owners/{print $2; exit}')
+if [[ "$VOL_OWNERS" == "Enabled" ]]; then
+  echo "[SKIP] Ownership already enabled on $VOLUME_MOUNT"
+else
+  sudo diskutil enableOwnership "$VOLUME_MOUNT" >/dev/null
+  echo "[SET]  Ownership enabled on $VOLUME_MOUNT"
+fi
 
 # ===========================================================================
 # Section 3: Directory layout
@@ -289,8 +321,14 @@ echo ""
 
 # LaunchDaemons start before Finder mounts volumes. Without an fstab entry,
 # the daemon's model directory won't exist at first boot after a reboot.
-VOL_UUID=$(diskutil info "$VOLUME_MOUNT" 2>/dev/null \
-  | awk '/Volume UUID/{print $NF}')
+if [[ -z "$VOL_UUID" ]]; then
+  VOL_UUID=$(diskutil info "$VOLUME_MOUNT" 2>/dev/null \
+    | awk '/Volume UUID/{print $NF}')
+fi
+if [[ -z "$VOL_DEVICE" ]]; then
+  VOL_DEVICE=$(diskutil info "$VOLUME_MOUNT" 2>/dev/null \
+    | awk '/Device Identifier/{print $NF}')
+fi
 
 if [[ -z "$VOL_UUID" ]]; then
   echo "[WARN] Could not determine UUID for $VOLUME_MOUNT"
@@ -312,6 +350,38 @@ else
     echo "       $FSTAB_ENTRY"
     echo "[OK]   Volume will auto-mount at boot before LaunchDaemons start"
   fi
+fi
+
+MOUNT_HELPER_PLIST="/Library/LaunchDaemons/com.llm-server.storage-mount.plist"
+if [[ -n "$VOL_DEVICE" ]]; then
+  sudo tee "$MOUNT_HELPER_PLIST" > /dev/null <<PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.llm-server.storage-mount</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>/bin/mkdir -p '${VOLUME_MOUNT}' &amp;&amp; /usr/sbin/diskutil mount -mountPoint '${VOLUME_MOUNT}' '${VOL_DEVICE}' &gt;/dev/null 2&gt;&amp;1 || true; /usr/sbin/diskutil enableOwnership '${VOLUME_MOUNT}' &gt;/dev/null 2&gt;&amp;1 || true</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>/var/log/mac-llm-setup/storage-mount.log</string>
+  <key>StandardErrorPath</key><string>/var/log/mac-llm-setup/storage-mount.log</string>
+</dict>
+</plist>
+PLIST_EOF
+  sudo chown root:wheel "$MOUNT_HELPER_PLIST"
+  sudo chmod 644 "$MOUNT_HELPER_PLIST"
+  sudo launchctl bootout system "$MOUNT_HELPER_PLIST" 2>/dev/null || true
+  sudo launchctl bootstrap system "$MOUNT_HELPER_PLIST"
+  echo "[SET]  storage-mount LaunchDaemon installed and started"
+  echo "[INFO] It re-mounts $VOLUME_MOUNT and re-enables ownership at boot"
+else
+  echo "[WARN] Could not determine device identifier for $VOLUME_MOUNT"
+  echo "       Skipping storage-mount LaunchDaemon install"
 fi
 
 # ===========================================================================

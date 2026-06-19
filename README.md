@@ -166,12 +166,16 @@ Requires sudo. Only runs if `storage.use_external_volume: true` in `config.json`
 sudo ./storage-volume.sh
 ```
 
-- Detects volume by label (from precheck cache or live diskutil)
+- Detects volume by label (from precheck cache or live diskutil); mounts it automatically if it exists but is not currently mounted
 - Validates filesystem (rejects ExFAT/FAT32/NTFS)
-- Creates directory layout: `ollama/`, `rapid-mlx/`, `mlx-lm/`, `infinity/`, `exo/`, `gguf/`
+- Enables volume ownership (required for `_llmserver` permissions)
+- Creates directory layout: `ollama/`, `rapid-mlx/`, `mlx-lm/`, `infinity/`, `exo/`, `gguf/` — owned by `_llmserver`
 - Excludes volume from Spotlight
 - Wires `/Library` symlinks so `install-tools.sh` needs no changes
 - Adds fstab entry for boot-time auto-mount
+- Installs `com.llm-server.storage-mount` LaunchDaemon that mounts and re-enables ownership at boot, retrying through early boot and every 5 minutes if needed
+
+Idempotent: safe to re-run after any macOS update or hardware change.
 
 See [`docs/storage-guide.md`](docs/storage-guide.md).
 

@@ -154,7 +154,9 @@ fi
 if lsof -iTCP:22 -sTCP:LISTEN &>/dev/null 2>&1; then
   _pass "SSH enabled (port 22 listening)"
 else
-  _warn "SSH not enabled — enable with: sudo systemsetup -setremotelogin on"
+  _warn "SSH not enabled"
+  _info "Fix (macOS 26+): sudo launchctl enable system/com.openssh.sshd && sudo launchctl kickstart -k system/com.openssh.sshd"
+  _info "Fix (older macOS): sudo systemsetup -setremotelogin on"
 fi
 
 # sshd drop-in hardening

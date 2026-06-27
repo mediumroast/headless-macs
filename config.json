@@ -13,6 +13,7 @@
       "host": "0.0.0.0",
       "port": 8000,
       "model": "qwen3.5-4b-4bit",
+      "cache_dir": "/Library/RapidMLX/cache",
       "prefill_step_size": 8192,
       "no_thinking": false,
       "extras": []

@@ -411,12 +411,15 @@ if [[ "$(echo "$CONFIG" | jq -r '.tools.rapid_mlx.enabled')" == "true" ]]; then
   # Run built-in self-diagnostic
   rapid-mlx doctor 2>/dev/null || echo "[WARN] rapid-mlx doctor reported issues — check output above"
 
-  # Model cache directory
-  RMLX_CACHE="/Library/RapidMLX/cache"
-  if [[ -f /tmp/mac-llm-precheck.json ]] && \
-     [[ "$(jq -r '.storage.volume_configured // false' /tmp/mac-llm-precheck.json)" == "true" ]]; then
-    VOL_ROOT=$(jq -r '.storage.model_root' /tmp/mac-llm-precheck.json)
-    RMLX_CACHE="${VOL_ROOT}/rapid-mlx"
+  # Model cache directory — config.json takes precedence, then external volume, then default
+  RMLX_CACHE=$(echo "$CONFIG" | jq -r '.tools.rapid_mlx.cache_dir // empty')
+  if [[ -z "$RMLX_CACHE" ]]; then
+    RMLX_CACHE="/Library/RapidMLX/cache"
+    if [[ -f /tmp/mac-llm-precheck.json ]] && \
+       [[ "$(jq -r '.storage.volume_configured // false' /tmp/mac-llm-precheck.json)" == "true" ]]; then
+      VOL_ROOT=$(jq -r '.storage.model_root' /tmp/mac-llm-precheck.json)
+      RMLX_CACHE="${VOL_ROOT}/rapid-mlx"
+    fi
   fi
   sudo mkdir -p "$RMLX_CACHE"
   sudo chown -R "${LLMSERVER_USER}:${LLMSERVER_USER}" "$RMLX_CACHE"

@@ -111,7 +111,7 @@ check_endpoint() {
     return 0
   else
     echo "[WARN] $name API not yet responding — may still be starting"
-    echo "       Check: sudo launchctl print system/${name,,}"
+    echo "       Check: sudo launchctl print system/$(echo "$name" | tr '[:upper:]' '[:lower:]')"
     return 1
   fi
 }
@@ -237,13 +237,21 @@ if [[ "$(echo "$CONFIG" | jq -r '.tools.ollama.enabled')" == "true" ]]; then
   osascript -e 'tell application "System Events" to delete login item "Ollama"' \
     2>/dev/null || true
 
-  # 2. Gracefully quit the menu bar app, then force-kill if still alive
+  # 2. Bootout the existing system daemon first — KeepAlive means launchd will
+  #    immediately restart the process if we kill it without booting out first
+  OLLAMA_PLIST_EARLY="/Library/LaunchDaemons/com.ollama.server.plist"
+  if [[ -f "$OLLAMA_PLIST_EARLY" ]]; then
+    sudo launchctl bootout system "$OLLAMA_PLIST_EARLY" 2>/dev/null || true
+    sleep 1
+  fi
+
+  # 3. Gracefully quit the menu bar app, then force-kill any remaining process
   osascript -e 'quit app "Ollama"' 2>/dev/null || true
   sleep 1
   killall Ollama 2>/dev/null || true
   killall ollama 2>/dev/null || true
 
-  # 3. Remove any LaunchAgent the Ollama installer dropped in the user's home
+  # 4. Remove any LaunchAgent the Ollama installer dropped in the user's home
   for agent in \
       "$HOME/Library/LaunchAgents/com.ollama.ollama.plist" \
       "$HOME/Library/LaunchAgents/ollama.plist"; do
@@ -254,13 +262,13 @@ if [[ "$(echo "$CONFIG" | jq -r '.tools.ollama.enabled')" == "true" ]]; then
     fi
   done
 
-  # 4. Stop any Homebrew-managed Ollama service — it also holds port 11434
+  # 5. Stop any Homebrew-managed Ollama service — it also holds port 11434
   if brew services list 2>/dev/null | grep -q "^ollama"; then
     brew services stop ollama 2>/dev/null || true
     echo "[SET]  Stopped Homebrew Ollama service (our LaunchDaemon takes over)"
   fi
 
-  # 5. Wait for port 11434 to be free before loading daemon
+  # 6. Wait for port 11434 to be free before loading daemon
   for i in $(seq 1 10); do
     if ! lsof -iTCP:11434 -sTCP:LISTEN &>/dev/null 2>&1; then
       break

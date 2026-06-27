@@ -5,9 +5,6 @@
       "host": "0.0.0.0:11434",
       "models_dir": "/Library/Ollama/models",
       "keep_alive": 86400,
-      "num_parallel": 4,
-      "max_loaded_models": 3,
-      "max_context": 32768,
       "flash_attention": true,
       "gpu_percent": 80
     },

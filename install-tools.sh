@@ -298,8 +298,10 @@ if [[ "$(echo "$CONFIG" | jq -r '.tools.ollama.enabled')" == "true" ]]; then
   elif [[ $RAM_GB -le 24 ]]; then MAX_LOADED=2; NUM_PAR=2; MAX_CTX=16384
   elif [[ $RAM_GB -le 32 ]]; then MAX_LOADED=2; NUM_PAR=3; MAX_CTX=32768
   elif [[ $RAM_GB -le 64 ]]; then MAX_LOADED=3; NUM_PAR=4; MAX_CTX=32768
-  else                             MAX_LOADED=4; NUM_PAR=8; MAX_CTX=65536
+  else                             MAX_LOADED=4; NUM_PAR=8; MAX_CTX=""
   fi
+  # MAX_CTX="" means: don't set OLLAMA_MAX_CONTEXT — let Ollama use each model's
+  # native context window. Only cap on RAM-constrained tiers to prevent OOM.
 
   # Config overrides take precedence over auto-tune
   CFG_MAX_LOADED=$(echo "$CONFIG" | jq -r '.tools.ollama.max_loaded_models // empty')
@@ -315,7 +317,7 @@ if [[ "$(echo "$CONFIG" | jq -r '.tools.ollama.enabled')" == "true" ]]; then
   GPU_PCT=$(echo "$CONFIG"        | jq -r '.tools.ollama.gpu_percent')
   FLASH_ATTN=$(echo "$CONFIG"     | jq -r '.tools.ollama.flash_attention | if . then "1" else "0" end')
 
-  echo "[INFO] Ollama tuning: RAM=${RAM_GB}GB → MAX_LOADED=$MAX_LOADED NUM_PAR=$NUM_PAR MAX_CTX=$MAX_CTX"
+  echo "[INFO] Ollama tuning: RAM=${RAM_GB}GB → MAX_LOADED=$MAX_LOADED NUM_PAR=$NUM_PAR MAX_CTX=${MAX_CTX:-model-native}"
 
   # --- LaunchDaemon plist ---
   OLLAMA_PLIST="/Library/LaunchDaemons/com.ollama.server.plist"
@@ -350,7 +352,7 @@ if [[ "$(echo "$CONFIG" | jq -r '.tools.ollama.enabled')" == "true" ]]; then
     <key>OLLAMA_KEEP_ALIVE</key><string>${KEEP_ALIVE}</string>
     <key>OLLAMA_NUM_PARALLEL</key><string>${NUM_PAR}</string>
     <key>OLLAMA_MAX_LOADED_MODELS</key><string>${MAX_LOADED}</string>
-    <key>OLLAMA_MAX_CONTEXT</key><string>${MAX_CTX}</string>
+    ${MAX_CTX:+<key>OLLAMA_MAX_CONTEXT</key><string>${MAX_CTX}</string>}
     <key>OLLAMA_FLASH_ATTENTION</key><string>${FLASH_ATTN}</string>
     <key>OLLAMA_NUM_GPU</key><string>1</string>
     <key>OLLAMA_GPU_PERCENT</key><string>${GPU_PCT}</string>

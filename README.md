@@ -276,6 +276,64 @@ curl -s http://localhost:11434/api/generate \
 See [`docs/modelfile-guide.md`](docs/modelfile-guide.md) for parameter rationale and
 the two-model split pattern (agent vs chat).
 
+### Serve a fine-tuned model with Rapid-MLX
+
+Rapid-MLX loads a single model at startup and holds it in memory. It does not support
+loading LoRA adapters at runtime — merge the adapter into the base model first using
+`mlx_lm.fuse`, then point Rapid-MLX at the merged checkpoint.
+
+**Step 1 — Fuse the adapter into the base model (one-time)**
+
+```bash
+python -m mlx_lm.fuse \
+  --model mlx-community/your-base-model-4bit \
+  --adapter-path /path/to/lora-adapter \
+  --save-path /Volumes/LLMStorage/models/my-fused-model
+```
+
+This writes a complete MLX model checkpoint to disk. Run it once per adapter version;
+the result is a static directory of weights that loads exactly like any other MLX model.
+
+**Step 2 — Point Rapid-MLX at the merged checkpoint**
+
+Edit `config.json`:
+
+```json
+"rapid_mlx": {
+  "enabled": true,
+  "model": "/Volumes/LLMStorage/models/my-fused-model"
+}
+```
+
+Rapid-MLX accepts either a HuggingFace repo ID (`mlx-community/model-name`) or an
+absolute local path.
+
+**Step 3 — Reload the daemon**
+
+```bash
+sudo ./install-tools.sh
+```
+
+This rewrites the plist with the new model path and restarts the daemon.
+The model loads into RAM on startup — no merging happens at runtime.
+
+**Updating to a new adapter version**
+
+```bash
+# Fuse new version
+python -m mlx_lm.fuse \
+  --model mlx-community/your-base-model-4bit \
+  --adapter-path /path/to/lora-adapter-v2 \
+  --save-path /Volumes/LLMStorage/models/my-fused-model-v2
+
+# Update config.json model path, then reload
+sudo ./install-tools.sh
+```
+
+**Note:** Rapid-MLX serves one model per instance. For general inference alongside
+a fine-tune, run Ollama on port 11434 and Rapid-MLX on port 8000 — each handles
+its own model independently.
+
 ### Point a coding agent at Ollama
 
 ```

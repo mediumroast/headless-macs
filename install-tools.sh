@@ -461,7 +461,9 @@ ${NO_THINKING_ARG}
   <dict>
     <key>HOME</key><string>${LLMSERVER_HOME}</string>
     <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
-    <key>RAPID_MLX_CACHE_DIR</key><string>${RMLX_CACHE}</string>
+    <!-- HF_HOME controls where HuggingFace downloads models — must point to external volume -->
+    <key>HF_HOME</key><string>${RMLX_CACHE}</string>
+    <key>HUGGINGFACE_HUB_CACHE</key><string>${RMLX_CACHE}/hub</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -480,7 +482,7 @@ PLIST
   sleep 5
   echo "[NOTE] First start downloads model '$RMLX_MODEL' if not cached — API unavailable until done"
   echo "       Monitor: tail -f /var/log/rapid-mlx/stdout.log"
-  check_endpoint "Rapid-MLX" "http://localhost:${RMLX_PORT}/v1/models" "." 10 || true
+  check_endpoint "com.rapid-mlx.server" "http://localhost:${RMLX_PORT}/v1/models" "." 10 || true
   echo ""
 fi
 

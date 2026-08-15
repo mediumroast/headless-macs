@@ -43,14 +43,18 @@ Logs:   /var/log/mac-llm-setup/
 
 func main() {
 	args := os.Args[1:]
-	if len(args) > 0 {
-		switch args[0] {
-		case "--help", "-h":
+	for _, a := range args {
+		if a == "--help" || a == "-h" {
 			fmt.Print(usage)
 			os.Exit(0)
-		case "--version":
+		}
+		if a == "--version" {
 			fmt.Println("headless-macs " + version)
 			os.Exit(0)
+		}
+	}
+	if len(args) > 0 {
+		switch args[0] {
 		case "precheck", "baseline", "install-tools", "verify", "restore", "update-tools", "storage":
 			runCLI(args[0])
 			return
@@ -122,6 +126,7 @@ func runCLI(cmd string) {
 			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 			os.Exit(1)
 		}
+		r.PrintText()
 		if r.Readiness.Blockers > 0 {
 			os.Exit(1)
 		}

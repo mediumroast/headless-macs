@@ -24,6 +24,20 @@ func runPrecheckCmd(cfg *config.Config) tea.Cmd {
 	}
 }
 
+// VerifyDoneMsg is sent when RunVerify completes.
+type VerifyDoneMsg struct {
+	Result *ops.VerifyResult
+	Err    error
+}
+
+// runVerifyCmd runs the verify health check in a goroutine.
+func runVerifyCmd(cfg *config.Config) tea.Cmd {
+	return func() tea.Msg {
+		result, err := ops.RunVerify(cfg)
+		return VerifyDoneMsg{Result: result, Err: err}
+	}
+}
+
 type precheckState int
 
 const (
@@ -31,18 +45,25 @@ const (
 	precheckDone
 )
 
-// PrecheckModel is the Bubble Tea model for the precheck screen.
+// PrecheckModel is the Bubble Tea model for the precheck and verify screens.
+// The title field controls which stage name appears in the header.
 type PrecheckModel struct {
-	state   precheckState
-	result  *ops.PrecheckResult
-	err     error
-	scroll  int
-	width   int
-	height  int
+	title        string
+	state        precheckState
+	result       *ops.PrecheckResult
+	verifyResult *ops.VerifyResult
+	err          error
+	scroll       int
+	width        int
+	height       int
 }
 
 func NewPrecheckModel() PrecheckModel {
-	return PrecheckModel{state: precheckRunning}
+	return PrecheckModel{title: "Precheck", state: precheckRunning}
+}
+
+func NewVerifyModel() PrecheckModel {
+	return PrecheckModel{title: "Verify", state: precheckRunning}
 }
 
 func (m PrecheckModel) Init() tea.Cmd { return nil }
@@ -58,6 +79,11 @@ func (m PrecheckModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.Err
 		m.state = precheckDone
 
+	case VerifyDoneMsg:
+		m.verifyResult = msg.Result
+		m.err = msg.Err
+		m.state = precheckDone
+
 	case tea.KeyMsg:
 		if m.state != precheckDone {
 			break
@@ -68,7 +94,7 @@ func (m PrecheckModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.scroll--
 			}
 		case "down", "j":
-			if m.result != nil && m.scroll < len(m.result.Checks)-1 {
+			if n := m.checkCount(); m.scroll < n-1 {
 				m.scroll++
 			}
 		case "q", "esc":
@@ -81,13 +107,17 @@ func (m PrecheckModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m PrecheckModel) View() string {
 	var b strings.Builder
 
-	b.WriteString(styleTitle.Render(fmt.Sprintf(" headless-macs v%s — Precheck ", appVersion)))
+	b.WriteString(styleTitle.Render(fmt.Sprintf(" headless-macs v%s — %s ", appVersion, m.title)))
 	b.WriteByte('\n')
 	b.WriteString(styleDivider.Render(strings.Repeat("─", max(m.width, 40))))
 	b.WriteByte('\n')
 
 	if m.state == precheckRunning {
-		b.WriteString("\n  Running system audit… (read-only, no changes made)\n")
+		running := "Running system audit… (read-only, no changes made)"
+		if m.title == "Verify" {
+			running = "Running health check… (read-only, requires sudo)"
+		}
+		b.WriteString("\n  " + running + "\n")
 		return b.String()
 	}
 
@@ -96,7 +126,7 @@ func (m PrecheckModel) View() string {
 		b.WriteByte('\n')
 	}
 
-	if m.result != nil {
+	if m.result != nil || m.verifyResult != nil {
 		rows := m.renderChecks()
 		visible := m.height - 5
 		if visible < 1 {
@@ -118,14 +148,24 @@ func (m PrecheckModel) View() string {
 			b.WriteByte('\n')
 		}
 
-		r := m.result.Readiness
 		b.WriteString(styleDivider.Render(strings.Repeat("─", max(m.width, 40))))
 		b.WriteByte('\n')
-		summary := fmt.Sprintf("  %d blocker(s)  %d warning(s)", r.Blockers, r.Warnings)
-		if r.CanProceed {
-			b.WriteString(styleStatusSaved.Render(summary + "  — ready to proceed"))
-		} else {
-			b.WriteString(styleError.Render(summary + "  — resolve blockers before continuing"))
+		if m.result != nil {
+			r := m.result.Readiness
+			summary := fmt.Sprintf("  %d blocker(s)  %d warning(s)", r.Blockers, r.Warnings)
+			if r.CanProceed {
+				b.WriteString(styleStatusSaved.Render(summary + "  — ready to proceed"))
+			} else {
+				b.WriteString(styleError.Render(summary + "  — resolve blockers before continuing"))
+			}
+		} else if m.verifyResult != nil {
+			v := m.verifyResult
+			summary := fmt.Sprintf("  %d passed  %d warning(s)  %d failure(s)", v.Passes, v.Warnings, v.Failures)
+			if v.Failures == 0 {
+				b.WriteString(styleStatusSaved.Render(summary))
+			} else {
+				b.WriteString(styleError.Render(summary))
+			}
 		}
 		b.WriteByte('\n')
 	}
@@ -136,14 +176,35 @@ func (m PrecheckModel) View() string {
 	return b.String()
 }
 
+func (m PrecheckModel) checkCount() int {
+	if m.result != nil {
+		return len(m.result.Checks)
+	}
+	if m.verifyResult != nil {
+		return len(m.verifyResult.Checks)
+	}
+	return 0
+}
+
+func (m PrecheckModel) checks() []ops.CheckItem {
+	if m.result != nil {
+		return m.result.Checks
+	}
+	if m.verifyResult != nil {
+		return m.verifyResult.Checks
+	}
+	return nil
+}
+
 func (m PrecheckModel) renderChecks() []string {
-	if m.result == nil {
+	items := m.checks()
+	if items == nil {
 		return nil
 	}
-	rows := make([]string, 0, len(m.result.Checks))
+	rows := make([]string, 0, len(items))
 	currentSection := ""
 
-	for _, c := range m.result.Checks {
+	for _, c := range items {
 		if c.Section != currentSection {
 			if currentSection != "" {
 				rows = append(rows, "")

@@ -87,7 +87,7 @@ func RunStorage(cfg *config.Config) (*StorageResult, error) {
 		return r, nil
 	}
 
-	logPath, err := ilog.Init("storage-volume")
+	logPath, err := ilog.InitTUI("storage-volume")
 	if err != nil {
 		logPath = "/tmp/headless-macs-storage.log"
 	}

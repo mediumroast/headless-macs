@@ -69,7 +69,7 @@ func RunUpdateTools(cfg *config.Config) (*UpdateResult, error) {
 
 	r := &UpdateResult{}
 
-	logPath, err := ilog.Init("update-tools")
+	logPath, err := ilog.InitTUI("update-tools")
 	if err != nil {
 		logPath = "/tmp/headless-macs-update.log"
 	}

@@ -71,7 +71,7 @@ func RunRestore() (*RestoreResult, error) {
 
 	r := &RestoreResult{}
 
-	logPath, err := ilog.Init("restore")
+	logPath, err := ilog.InitTUI("restore")
 	if err != nil {
 		logPath = "/tmp/headless-macs-restore.log"
 	}

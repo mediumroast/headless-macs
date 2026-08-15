@@ -13,12 +13,21 @@ import (
 
 var out io.Writer = os.Stdout
 
-// Init creates the log file and wires output to tee stdout + file.
-// Call once at program start. Returns the log file path.
+// Init creates the log file. In TUI mode (tuiMode=true) output goes only to
+// the file; in CLI mode it tees to stdout as well. Returns the log file path.
 func Init(scriptName string) (string, error) {
+	return InitMode(scriptName, false)
+}
+
+// InitTUI is like Init but suppresses stdout — for use inside the Bubble Tea TUI
+// where writing to stdout trashes the alt-screen renderer.
+func InitTUI(scriptName string) (string, error) {
+	return InitMode(scriptName, true)
+}
+
+func InitMode(scriptName string, tuiMode bool) (string, error) {
 	logDir := "/var/log/mac-llm-setup"
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
-		// Fall back to /tmp if we can't write to /var/log (e.g. no sudo yet)
 		logDir = "/tmp"
 	}
 	logPath := filepath.Join(logDir, fmt.Sprintf("%s-%s.log", scriptName, time.Now().Format("20060102-150405")))
@@ -26,7 +35,11 @@ func Init(scriptName string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	out = io.MultiWriter(os.Stdout, f)
+	if tuiMode {
+		out = f
+	} else {
+		out = io.MultiWriter(os.Stdout, f)
+	}
 	fmt.Fprintf(out, "=== %s started at %s ===\n", scriptName, time.Now().Format(time.RFC1123))
 	return logPath, nil
 }

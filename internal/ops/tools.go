@@ -73,7 +73,7 @@ func RunTools(cfg *config.Config) (*ToolsResult, error) {
 
 	r := &ToolsResult{}
 
-	logPath, err := ilog.Init("install-tools")
+	logPath, err := ilog.InitTUI("install-tools")
 	if err != nil {
 		logPath = "/tmp/headless-macs-tools.log"
 	}

@@ -82,7 +82,7 @@ func RunVerify(cfg *config.Config) (*VerifyResult, error) {
 
 	r := &VerifyResult{}
 
-	logPath, err := ilog.Init("verify")
+	logPath, err := ilog.InitTUI("verify")
 	if err != nil {
 		logPath = "/tmp/headless-macs-verify.log"
 	}

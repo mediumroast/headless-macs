@@ -59,7 +59,7 @@ func RunBaseline(cfg *config.Config, opts BaselineOptions) (*BaselineResult, err
 
 	r := &BaselineResult{}
 
-	logPath, err := ilog.Init("setup")
+	logPath, err := ilog.InitTUI("setup")
 	if err != nil {
 		logPath = "/tmp/headless-macs-setup.log"
 	}

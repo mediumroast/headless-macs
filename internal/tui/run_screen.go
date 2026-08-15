@@ -53,6 +53,32 @@ func runToolsCmd(cfg *config.Config) tea.Cmd {
 	}
 }
 
+// RestoreDoneMsg is sent when RunRestore completes.
+type RestoreDoneMsg struct {
+	Result *ops.RestoreResult
+	Err    error
+}
+
+func runRestoreCmd() tea.Cmd {
+	return func() tea.Msg {
+		result, err := ops.RunRestore()
+		return RestoreDoneMsg{Result: result, Err: err}
+	}
+}
+
+// UpdateDoneMsg is sent when RunUpdateTools completes.
+type UpdateDoneMsg struct {
+	Result *ops.UpdateResult
+	Err    error
+}
+
+func runUpdateCmd(cfg *config.Config) tea.Cmd {
+	return func() tea.Msg {
+		result, err := ops.RunUpdateTools(cfg)
+		return UpdateDoneMsg{Result: result, Err: err}
+	}
+}
+
 type runState int
 
 const (
@@ -69,6 +95,8 @@ type RunScreenModel struct {
 	result        *ops.BaselineResult
 	storageResult *ops.StorageResult
 	toolsResult   *ops.ToolsResult
+	restoreResult *ops.RestoreResult
+	updateResult  *ops.UpdateResult
 	err           error
 	scroll        int
 	width         int
@@ -99,6 +127,16 @@ func (m RunScreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ToolsDoneMsg:
 		m.toolsResult = msg.Result
+		m.err = msg.Err
+		m.state = runStateDone
+
+	case RestoreDoneMsg:
+		m.restoreResult = msg.Result
+		m.err = msg.Err
+		m.state = runStateDone
+
+	case UpdateDoneMsg:
+		m.updateResult = msg.Result
 		m.err = msg.Err
 		m.state = runStateDone
 
@@ -140,7 +178,7 @@ func (m RunScreenModel) View() string {
 		b.WriteByte('\n')
 	}
 
-	if m.result != nil || m.storageResult != nil || m.toolsResult != nil {
+	if m.stageActions() != nil {
 		rows := m.renderActions()
 		visible := m.height - 5
 		if visible < 1 {
@@ -186,40 +224,37 @@ func (m RunScreenModel) View() string {
 }
 
 func (m RunScreenModel) actionCount() int {
-	if m.result != nil {
-		return len(m.result.Actions)
-	}
-	if m.storageResult != nil {
-		return len(m.storageResult.Actions)
-	}
-	if m.toolsResult != nil {
-		return len(m.toolsResult.Actions)
-	}
-	return 0
+	return len(m.stageActions())
 }
 
 func (m RunScreenModel) stageSummary() (sets, skips, warns, fails int, logPath string) {
-	if m.result != nil {
+	switch {
+	case m.result != nil:
 		return m.result.Sets, m.result.Skips, m.result.Warnings, m.result.Failures, m.result.LogPath
-	}
-	if m.storageResult != nil {
+	case m.storageResult != nil:
 		return m.storageResult.Sets, m.storageResult.Skips, m.storageResult.Warnings, m.storageResult.Failures, m.storageResult.LogPath
-	}
-	if m.toolsResult != nil {
+	case m.toolsResult != nil:
 		return m.toolsResult.Sets, m.toolsResult.Skips, m.toolsResult.Warnings, m.toolsResult.Failures, m.toolsResult.LogPath
+	case m.restoreResult != nil:
+		return m.restoreResult.Sets, m.restoreResult.Skips, m.restoreResult.Warnings, m.restoreResult.Failures, m.restoreResult.LogPath
+	case m.updateResult != nil:
+		return m.updateResult.Sets, m.updateResult.Skips, m.updateResult.Warnings, m.updateResult.Failures, m.updateResult.LogPath
 	}
 	return
 }
 
 func (m RunScreenModel) stageActions() []ops.BaselineAction {
-	if m.result != nil {
+	switch {
+	case m.result != nil:
 		return m.result.Actions
-	}
-	if m.storageResult != nil {
+	case m.storageResult != nil:
 		return m.storageResult.Actions
-	}
-	if m.toolsResult != nil {
+	case m.toolsResult != nil:
 		return m.toolsResult.Actions
+	case m.restoreResult != nil:
+		return m.restoreResult.Actions
+	case m.updateResult != nil:
+		return m.updateResult.Actions
 	}
 	return nil
 }

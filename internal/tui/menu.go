@@ -31,8 +31,8 @@ var menuItems = []MenuItem{
 	{Label: "System Baseline", Key: "b", Ready: true},
 	{Label: "Install Tools", Key: "i", Ready: true},
 	{Label: "Verify", Key: "v", Ready: true},
-	{Label: "Restore", Key: "r", Ready: false},
-	{Label: "Update Tools", Key: "u", Ready: false},
+	{Label: "Restore", Key: "r", Ready: true},
+	{Label: "Update Tools", Key: "u", Ready: true},
 	{Label: "Quit", Key: "q", Ready: true},
 }
 

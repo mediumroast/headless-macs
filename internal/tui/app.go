@@ -20,20 +20,24 @@ const (
 	screenStorage
 	screenTools
 	screenVerify
+	screenRestoreConfirm
+	screenRestore
+	screenUpdate
 )
 
 // App is the top-level Bubble Tea model. It owns the active screen and
 // routes messages between child models.
 type App struct {
-	screen       screen
-	configEditor ConfigEditorModel
-	menu         MenuModel
-	precheck     PrecheckModel
-	runScreen    RunScreenModel
-	cfg          *config.Config
-	width        int
-	height       int
-	errMsg       string
+	screen         screen
+	configEditor   ConfigEditorModel
+	menu           MenuModel
+	precheck       PrecheckModel
+	runScreen      RunScreenModel
+	restoreConfirm RestoreConfirmModel
+	cfg            *config.Config
+	width          int
+	height         int
+	errMsg         string
 }
 
 // NewApp creates the App. cfg is the loaded config (or nil on first run,
@@ -66,6 +70,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.precheck = pc.(PrecheckModel)
 		rs, _ := a.runScreen.Update(msg)
 		a.runScreen = rs.(RunScreenModel)
+		rc, _ := a.restoreConfirm.Update(msg)
+		a.restoreConfirm = rc.(RestoreConfirmModel)
 		return a, nil
 
 	case SavedMsg:
@@ -103,6 +109,21 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.runScreen = updated.(RunScreenModel)
 		return a, cmd
 
+	case RestoreConfirmedMsg:
+		a.runScreen = NewRunScreen("Restore")
+		a.screen = screenRestore
+		return a, runRestoreCmd()
+
+	case RestoreDoneMsg:
+		updated, cmd := a.runScreen.Update(msg)
+		a.runScreen = updated.(RunScreenModel)
+		return a, cmd
+
+	case UpdateDoneMsg:
+		updated, cmd := a.runScreen.Update(msg)
+		a.runScreen = updated.(RunScreenModel)
+		return a, cmd
+
 	case MenuSelectMsg:
 		return a.handleMenuSelect(msg.Index)
 
@@ -125,9 +146,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			updated, cmd := a.precheck.Update(msg)
 			a.precheck = updated.(PrecheckModel)
 			return a, cmd
-		case screenBaseline, screenStorage, screenTools:
+		case screenBaseline, screenStorage, screenTools, screenRestore, screenUpdate:
 			updated, cmd := a.runScreen.Update(msg)
 			a.runScreen = updated.(RunScreenModel)
+			return a, cmd
+		case screenRestoreConfirm:
+			updated, cmd := a.restoreConfirm.Update(msg)
+			a.restoreConfirm = updated.(RestoreConfirmModel)
 			return a, cmd
 		}
 	}
@@ -163,6 +188,14 @@ func (a App) handleMenuSelect(idx int) (tea.Model, tea.Cmd) {
 		a.precheck = NewVerifyModel()
 		a.screen = screenVerify
 		return a, runVerifyCmd(a.cfg)
+	case "r":
+		a.restoreConfirm = NewRestoreConfirmModel()
+		a.screen = screenRestoreConfirm
+		return a, nil
+	case "u":
+		a.runScreen = NewRunScreen("Update Tools")
+		a.screen = screenUpdate
+		return a, runUpdateCmd(a.cfg)
 	default:
 		a.errMsg = fmt.Sprintf("%s is not yet implemented (coming in a future phase).", item.Label)
 		return a, nil
@@ -178,8 +211,10 @@ func (a App) View() string {
 		content = a.menu.View()
 	case screenPrecheck, screenVerify:
 		content = a.precheck.View()
-	case screenBaseline, screenStorage, screenTools:
+	case screenBaseline, screenStorage, screenTools, screenRestore, screenUpdate:
 		content = a.runScreen.View()
+	case screenRestoreConfirm:
+		content = a.restoreConfirm.View()
 	}
 
 	if a.errMsg != "" {

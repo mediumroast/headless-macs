@@ -16,6 +16,7 @@ const (
 	screenConfigEditor screen = iota
 	screenMenu
 	screenPrecheck
+	screenBaseline
 )
 
 // App is the top-level Bubble Tea model. It owns the active screen and
@@ -25,6 +26,7 @@ type App struct {
 	configEditor ConfigEditorModel
 	menu         MenuModel
 	precheck     PrecheckModel
+	runScreen    RunScreenModel
 	cfg          *config.Config
 	width        int
 	height       int
@@ -59,6 +61,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.menu = mn.(MenuModel)
 		pc, _ := a.precheck.Update(msg)
 		a.precheck = pc.(PrecheckModel)
+		rs, _ := a.runScreen.Update(msg)
+		a.runScreen = rs.(RunScreenModel)
 		return a, nil
 
 	case SavedMsg:
@@ -74,6 +78,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case PrecheckDoneMsg:
 		updated, cmd := a.precheck.Update(msg)
 		a.precheck = updated.(PrecheckModel)
+		return a, cmd
+
+	case BaselineDoneMsg:
+		updated, cmd := a.runScreen.Update(msg)
+		a.runScreen = updated.(RunScreenModel)
 		return a, cmd
 
 	case MenuSelectMsg:
@@ -98,6 +107,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			updated, cmd := a.precheck.Update(msg)
 			a.precheck = updated.(PrecheckModel)
 			return a, cmd
+		case screenBaseline:
+			updated, cmd := a.runScreen.Update(msg)
+			a.runScreen = updated.(RunScreenModel)
+			return a, cmd
 		}
 	}
 
@@ -116,6 +129,10 @@ func (a App) handleMenuSelect(idx int) (tea.Model, tea.Cmd) {
 		a.precheck = NewPrecheckModel()
 		a.screen = screenPrecheck
 		return a, runPrecheckCmd(a.cfg)
+	case "b":
+		a.runScreen = NewRunScreen("System Baseline")
+		a.screen = screenBaseline
+		return a, runBaselineCmd(a.cfg)
 	default:
 		a.errMsg = fmt.Sprintf("%s is not yet implemented (coming in a future phase).", item.Label)
 		return a, nil
@@ -131,6 +148,8 @@ func (a App) View() string {
 		content = a.menu.View()
 	case screenPrecheck:
 		content = a.precheck.View()
+	case screenBaseline:
+		content = a.runScreen.View()
 	}
 
 	if a.errMsg != "" {

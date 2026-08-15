@@ -17,6 +17,7 @@ const (
 	screenMenu
 	screenPrecheck
 	screenBaseline
+	screenStorage
 )
 
 // App is the top-level Bubble Tea model. It owns the active screen and
@@ -85,6 +86,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.runScreen = updated.(RunScreenModel)
 		return a, cmd
 
+	case StorageDoneMsg:
+		updated, cmd := a.runScreen.Update(msg)
+		a.runScreen = updated.(RunScreenModel)
+		return a, cmd
+
 	case MenuSelectMsg:
 		return a.handleMenuSelect(msg.Index)
 
@@ -107,7 +113,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			updated, cmd := a.precheck.Update(msg)
 			a.precheck = updated.(PrecheckModel)
 			return a, cmd
-		case screenBaseline:
+		case screenBaseline, screenStorage:
 			updated, cmd := a.runScreen.Update(msg)
 			a.runScreen = updated.(RunScreenModel)
 			return a, cmd
@@ -133,6 +139,10 @@ func (a App) handleMenuSelect(idx int) (tea.Model, tea.Cmd) {
 		a.runScreen = NewRunScreen("System Baseline")
 		a.screen = screenBaseline
 		return a, runBaselineCmd(a.cfg)
+	case "t":
+		a.runScreen = NewRunScreen("Storage Setup")
+		a.screen = screenStorage
+		return a, runStorageCmd(a.cfg)
 	default:
 		a.errMsg = fmt.Sprintf("%s is not yet implemented (coming in a future phase).", item.Label)
 		return a, nil
@@ -148,7 +158,7 @@ func (a App) View() string {
 		content = a.menu.View()
 	case screenPrecheck:
 		content = a.precheck.View()
-	case screenBaseline:
+	case screenBaseline, screenStorage:
 		content = a.runScreen.View()
 	}
 

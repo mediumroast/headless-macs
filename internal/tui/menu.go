@@ -27,7 +27,7 @@ type MenuModel struct {
 var menuItems = []MenuItem{
 	{Label: "Edit Config", Key: "c", Ready: true},
 	{Label: "Precheck", Key: "p", Ready: true},
-	{Label: "Storage Setup", Key: "t", Ready: false},
+	{Label: "Storage Setup", Key: "t", Ready: true},
 	{Label: "System Baseline", Key: "b", Ready: true},
 	{Label: "Install Tools", Key: "i", Ready: false},
 	{Label: "Verify", Key: "v", Ready: false},

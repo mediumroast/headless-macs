@@ -27,6 +27,19 @@ func runBaselineCmd(cfg *config.Config) tea.Cmd {
 	}
 }
 
+// StorageDoneMsg is sent when RunStorage completes.
+type StorageDoneMsg struct {
+	Result *ops.StorageResult
+	Err    error
+}
+
+func runStorageCmd(cfg *config.Config) tea.Cmd {
+	return func() tea.Msg {
+		result, err := ops.RunStorage(cfg)
+		return StorageDoneMsg{Result: result, Err: err}
+	}
+}
+
 type runState int
 
 const (
@@ -35,14 +48,17 @@ const (
 )
 
 // RunScreenModel is the Bubble Tea model for an in-progress ops stage.
+// It handles both BaselineResult and StorageResult by normalising to a
+// stageView on receipt.
 type RunScreenModel struct {
-	title  string
-	state  runState
-	result *ops.BaselineResult
-	err    error
-	scroll int
-	width  int
-	height int
+	title         string
+	state         runState
+	result        *ops.BaselineResult
+	storageResult *ops.StorageResult
+	err           error
+	scroll        int
+	width         int
+	height        int
 }
 
 func NewRunScreen(title string) RunScreenModel {
@@ -62,6 +78,11 @@ func (m RunScreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.Err
 		m.state = runStateDone
 
+	case StorageDoneMsg:
+		m.storageResult = msg.Result
+		m.err = msg.Err
+		m.state = runStateDone
+
 	case tea.KeyMsg:
 		if m.state != runStateDone {
 			break
@@ -72,7 +93,7 @@ func (m RunScreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.scroll--
 			}
 		case "down", "j":
-			if m.result != nil && m.scroll < len(m.result.Actions)-1 {
+			if n := m.actionCount(); m.scroll < n-1 {
 				m.scroll++
 			}
 		case "q", "esc":
@@ -100,7 +121,7 @@ func (m RunScreenModel) View() string {
 		b.WriteByte('\n')
 	}
 
-	if m.result != nil {
+	if m.result != nil || m.storageResult != nil {
 		rows := m.renderActions()
 		visible := m.height - 5
 		if visible < 1 {
@@ -122,19 +143,19 @@ func (m RunScreenModel) View() string {
 			b.WriteByte('\n')
 		}
 
-		r := m.result
+		sets, skips, warns, fails, logPath := m.stageSummary()
 		b.WriteString(styleDivider.Render(strings.Repeat("─", max(m.width, 40))))
 		b.WriteByte('\n')
 		summary := fmt.Sprintf("  %d applied  %d skipped  %d warnings  %d failures",
-			r.Sets, r.Skips, r.Warnings, r.Failures)
-		if r.Failures == 0 {
+			sets, skips, warns, fails)
+		if fails == 0 {
 			b.WriteString(styleStatusSaved.Render(summary))
 		} else {
 			b.WriteString(styleError.Render(summary))
 		}
 		b.WriteByte('\n')
-		if r.LogPath != "" {
-			b.WriteString(styleKeyHint.Render(fmt.Sprintf("  Log: %s", r.LogPath)))
+		if logPath != "" {
+			b.WriteString(styleKeyHint.Render(fmt.Sprintf("  Log: %s", logPath)))
 			b.WriteByte('\n')
 		}
 	}
@@ -145,14 +166,45 @@ func (m RunScreenModel) View() string {
 	return b.String()
 }
 
+func (m RunScreenModel) actionCount() int {
+	if m.result != nil {
+		return len(m.result.Actions)
+	}
+	if m.storageResult != nil {
+		return len(m.storageResult.Actions)
+	}
+	return 0
+}
+
+func (m RunScreenModel) stageSummary() (sets, skips, warns, fails int, logPath string) {
+	if m.result != nil {
+		return m.result.Sets, m.result.Skips, m.result.Warnings, m.result.Failures, m.result.LogPath
+	}
+	if m.storageResult != nil {
+		return m.storageResult.Sets, m.storageResult.Skips, m.storageResult.Warnings, m.storageResult.Failures, m.storageResult.LogPath
+	}
+	return
+}
+
+func (m RunScreenModel) stageActions() []ops.BaselineAction {
+	if m.result != nil {
+		return m.result.Actions
+	}
+	if m.storageResult != nil {
+		return m.storageResult.Actions
+	}
+	return nil
+}
+
 func (m RunScreenModel) renderActions() []string {
-	if m.result == nil {
+	actions := m.stageActions()
+	if actions == nil {
 		return nil
 	}
-	rows := make([]string, 0, len(m.result.Actions))
+	rows := make([]string, 0, len(actions))
 	currentSection := ""
 
-	for _, a := range m.result.Actions {
+	for _, a := range actions {
 		if a.Section != currentSection {
 			if currentSection != "" {
 				rows = append(rows, "")

@@ -12,7 +12,32 @@ import (
 	"github.com/mediumroast/headless-macs/internal/tui"
 )
 
+const usage = `headless-macs — Apple Silicon LLM inference node manager
+
+Usage:
+  sudo headless-macs          Launch the interactive TUI
+
+Options:
+  --help, -h    Show this help and exit
+  --version     Show version and exit
+
+The binary requires root (sudo) and Apple Silicon (arm64).
+Config: ~/.headless_macs/config.json
+Logs:   /var/log/mac-llm-setup/
+`
+
 func main() {
+	for _, arg := range os.Args[1:] {
+		switch arg {
+		case "--help", "-h":
+			fmt.Print(usage)
+			os.Exit(0)
+		case "--version":
+			fmt.Println("headless-macs 2.0.0")
+			os.Exit(0)
+		}
+	}
+
 	if runtime.GOOS != "darwin" {
 		fmt.Fprintln(os.Stderr, "ERROR: macOS required.")
 		os.Exit(1)

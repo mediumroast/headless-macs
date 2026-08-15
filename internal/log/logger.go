@@ -13,6 +13,10 @@ import (
 
 var out io.Writer = os.Stdout
 
+// CLIMode, when true, forces stdout output regardless of how Init was called.
+// Set this before calling any Run* function when executing a CLI subcommand.
+var CLIMode bool
+
 // Init creates the log file. In TUI mode (tuiMode=true) output goes only to
 // the file; in CLI mode it tees to stdout as well. Returns the log file path.
 func Init(scriptName string) (string, error) {
@@ -26,6 +30,9 @@ func InitTUI(scriptName string) (string, error) {
 }
 
 func InitMode(scriptName string, tuiMode bool) (string, error) {
+	if CLIMode {
+		tuiMode = false
+	}
 	logDir := "/var/log/mac-llm-setup"
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		logDir = "/tmp"

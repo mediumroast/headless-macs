@@ -9,6 +9,7 @@ package ops
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -249,8 +250,8 @@ func (r *ToolsResult) installOllama(cfg *config.Config, localhostOnly bool) {
 	} else {
 		r.add(section, ActionInfo, "Downloading and installing Ollama…", "")
 		cmd := exec.Command("/bin/sh", "-c", "curl -fsSL https://ollama.com/install.sh | sh")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		cmd.Stdout = io.Discard
+		cmd.Stderr = io.Discard
 		if err := cmd.Run(); err != nil {
 			r.add(section, ActionFail, "Ollama install failed: "+err.Error(), "")
 			return

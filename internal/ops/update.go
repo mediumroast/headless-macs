@@ -8,6 +8,7 @@ package ops
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -146,8 +147,8 @@ func (r *UpdateResult) updateOllama() {
 	// Run upstream installer (best-effort — always re-bootstrap regardless of result)
 	r.add(sec, ActionInfo, "Running Ollama installer…", "")
 	cmd := exec.Command("/bin/sh", "-c", "curl -fsSL https://ollama.com/install.sh | sh")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
 	installOK := cmd.Run() == nil
 	if installOK {
 		r.add(sec, ActionSet, "Ollama installer complete", "")

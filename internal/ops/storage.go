@@ -11,6 +11,7 @@ package ops
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -616,8 +617,8 @@ func volumeDF(mount string) (free, total int) {
 // sudoRun executes a command that requires root (we are already root).
 func sudoRun(name string, args ...string) error {
 	cmd := exec.Command(name, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
 	return cmd.Run()
 }
 

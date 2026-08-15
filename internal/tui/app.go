@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/mediumroast/headless-macs/internal/config"
@@ -112,7 +113,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case RestoreConfirmedMsg:
 		a.runScreen = NewRunScreen("Restore")
 		a.screen = screenRestore
-		return a, runRestoreCmd()
+		return a, tea.Batch(runRestoreCmd(), a.runScreen.spinner.Tick)
 
 	case RestoreDoneMsg:
 		updated, cmd := a.runScreen.Update(msg)
@@ -123,6 +124,22 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updated, cmd := a.runScreen.Update(msg)
 		a.runScreen = updated.(RunScreenModel)
 		return a, cmd
+
+	case spinner.TickMsg:
+		switch a.screen {
+		case screenBaseline, screenStorage, screenTools, screenRestore, screenUpdate:
+			if a.runScreen.state == runStateRunning {
+				updated, cmd := a.runScreen.Update(msg)
+				a.runScreen = updated.(RunScreenModel)
+				return a, cmd
+			}
+		case screenPrecheck, screenVerify:
+			if a.precheck.state == precheckRunning {
+				updated, cmd := a.precheck.Update(msg)
+				a.precheck = updated.(PrecheckModel)
+				return a, cmd
+			}
+		}
 
 	case MenuSelectMsg:
 		return a.handleMenuSelect(msg.Index)
@@ -171,23 +188,23 @@ func (a App) handleMenuSelect(idx int) (tea.Model, tea.Cmd) {
 	case "p":
 		a.precheck = NewPrecheckModel()
 		a.screen = screenPrecheck
-		return a, runPrecheckCmd(a.cfg)
+		return a, tea.Batch(runPrecheckCmd(a.cfg), a.precheck.spinner.Tick)
 	case "b":
 		a.runScreen = NewRunScreen("System Baseline")
 		a.screen = screenBaseline
-		return a, runBaselineCmd(a.cfg)
+		return a, tea.Batch(runBaselineCmd(a.cfg), a.runScreen.spinner.Tick)
 	case "t":
 		a.runScreen = NewRunScreen("Storage Setup")
 		a.screen = screenStorage
-		return a, runStorageCmd(a.cfg)
+		return a, tea.Batch(runStorageCmd(a.cfg), a.runScreen.spinner.Tick)
 	case "i":
 		a.runScreen = NewRunScreen("Install Tools")
 		a.screen = screenTools
-		return a, runToolsCmd(a.cfg)
+		return a, tea.Batch(runToolsCmd(a.cfg), a.runScreen.spinner.Tick)
 	case "v":
 		a.precheck = NewVerifyModel()
 		a.screen = screenVerify
-		return a, runVerifyCmd(a.cfg)
+		return a, tea.Batch(runVerifyCmd(a.cfg), a.precheck.spinner.Tick)
 	case "r":
 		a.restoreConfirm = NewRestoreConfirmModel()
 		a.screen = screenRestoreConfirm
@@ -195,7 +212,7 @@ func (a App) handleMenuSelect(idx int) (tea.Model, tea.Cmd) {
 	case "u":
 		a.runScreen = NewRunScreen("Update Tools")
 		a.screen = screenUpdate
-		return a, runUpdateCmd(a.cfg)
+		return a, tea.Batch(runUpdateCmd(a.cfg), a.runScreen.spinner.Tick)
 	default:
 		a.errMsg = fmt.Sprintf("%s is not yet implemented (coming in a future phase).", item.Label)
 		return a, nil

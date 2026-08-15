@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/mediumroast/headless-macs/internal/config"
 	"github.com/mediumroast/headless-macs/internal/ops"
@@ -87,11 +89,12 @@ const (
 )
 
 // RunScreenModel is the Bubble Tea model for an in-progress ops stage.
-// It handles both BaselineResult and StorageResult by normalising to a
-// stageView on receipt.
+// It handles BaselineResult, StorageResult, ToolsResult, RestoreResult, and
+// UpdateResult by normalising them via stageActions()/stageSummary().
 type RunScreenModel struct {
 	title         string
 	state         runState
+	spinner       spinner.Model
 	result        *ops.BaselineResult
 	storageResult *ops.StorageResult
 	toolsResult   *ops.ToolsResult
@@ -104,7 +107,10 @@ type RunScreenModel struct {
 }
 
 func NewRunScreen(title string) RunScreenModel {
-	return RunScreenModel{title: title, state: runStateRunning}
+	s := spinner.New()
+	s.Spinner = spinner.Points
+	s.Style = lipgloss.NewStyle().Foreground(colCyan)
+	return RunScreenModel{title: title, state: runStateRunning, spinner: s}
 }
 
 func (m RunScreenModel) Init() tea.Cmd { return nil }
@@ -114,6 +120,13 @@ func (m RunScreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+
+	case spinner.TickMsg:
+		if m.state == runStateRunning {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
 
 	case BaselineDoneMsg:
 		m.result = msg.Result
@@ -144,14 +157,29 @@ func (m RunScreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state != runStateDone {
 			break
 		}
+		n := m.actionCount()
+		visible := m.visibleRows()
 		switch msg.String() {
 		case "up", "k":
 			if m.scroll > 0 {
 				m.scroll--
 			}
 		case "down", "j":
-			if n := m.actionCount(); m.scroll < n-1 {
+			if m.scroll < n-1 {
 				m.scroll++
+			}
+		case "pgup", "ctrl+u":
+			m.scroll -= visible / 2
+			if m.scroll < 0 {
+				m.scroll = 0
+			}
+		case "pgdn", "ctrl+d":
+			m.scroll += visible / 2
+			if m.scroll > n-1 {
+				m.scroll = n - 1
+			}
+			if m.scroll < 0 {
+				m.scroll = 0
 			}
 		case "q", "esc":
 			return m, func() tea.Msg { return DiscardMsg{} }
@@ -169,7 +197,7 @@ func (m RunScreenModel) View() string {
 	b.WriteByte('\n')
 
 	if m.state == runStateRunning {
-		b.WriteString("\n  Running… (requires sudo — changes are being applied)\n")
+		b.WriteString("\n  " + m.spinner.View() + "  Running… (requires sudo — changes are being applied)\n")
 		return b.String()
 	}
 
@@ -180,10 +208,15 @@ func (m RunScreenModel) View() string {
 
 	if m.stageActions() != nil {
 		rows := m.renderActions()
-		visible := m.height - 5
-		if visible < 1 {
-			visible = 1
+		visible := m.visibleRows()
+
+		// Scroll-above indicator
+		if m.scroll > 0 {
+			b.WriteString(styleKeyHint.Render(fmt.Sprintf("  ↑  %d more above\n", m.scroll)))
+		} else {
+			b.WriteByte('\n')
 		}
+
 		end := m.scroll + visible
 		if end > len(rows) {
 			end = len(rows)
@@ -197,6 +230,14 @@ func (m RunScreenModel) View() string {
 			b.WriteByte('\n')
 		}
 		for i := end - start; i < visible; i++ {
+			b.WriteByte('\n')
+		}
+
+		// Scroll-below indicator
+		remaining := len(rows) - end
+		if remaining > 0 {
+			b.WriteString(styleKeyHint.Render(fmt.Sprintf("  ↓  %d more below\n", remaining)))
+		} else {
 			b.WriteByte('\n')
 		}
 
@@ -218,9 +259,17 @@ func (m RunScreenModel) View() string {
 	}
 
 	b.WriteString(styleStatusBar.Render(
-		hint("↑↓", "scroll") + "  " + hint("q", "back to menu"),
+		hint("↑↓/PgUp/PgDn", "scroll") + "  " + hint("q", "back to menu"),
 	))
 	return b.String()
+}
+
+func (m RunScreenModel) visibleRows() int {
+	v := m.height - 9 // title(2) + indicator(1) + summary(3) + log(1) + status(1) + padding(1)
+	if v < 1 {
+		v = 1
+	}
+	return v
 }
 
 func (m RunScreenModel) actionCount() int {

@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/mediumroast/headless-macs/internal/config"
 	"github.com/mediumroast/headless-macs/internal/ops"
@@ -50,6 +52,7 @@ const (
 type PrecheckModel struct {
 	title        string
 	state        precheckState
+	spinner      spinner.Model
 	result       *ops.PrecheckResult
 	verifyResult *ops.VerifyResult
 	err          error
@@ -58,12 +61,19 @@ type PrecheckModel struct {
 	height       int
 }
 
+func newPrecheckSpinner() spinner.Model {
+	s := spinner.New()
+	s.Spinner = spinner.Points
+	s.Style = lipgloss.NewStyle().Foreground(colCyan)
+	return s
+}
+
 func NewPrecheckModel() PrecheckModel {
-	return PrecheckModel{title: "Precheck", state: precheckRunning}
+	return PrecheckModel{title: "Precheck", state: precheckRunning, spinner: newPrecheckSpinner()}
 }
 
 func NewVerifyModel() PrecheckModel {
-	return PrecheckModel{title: "Verify", state: precheckRunning}
+	return PrecheckModel{title: "Verify", state: precheckRunning, spinner: newPrecheckSpinner()}
 }
 
 func (m PrecheckModel) Init() tea.Cmd { return nil }
@@ -73,6 +83,13 @@ func (m PrecheckModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+
+	case spinner.TickMsg:
+		if m.state == precheckRunning {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
 
 	case PrecheckDoneMsg:
 		m.result = msg.Result
@@ -88,20 +105,43 @@ func (m PrecheckModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state != precheckDone {
 			break
 		}
+		n := m.checkCount()
+		visible := m.visibleRows()
 		switch msg.String() {
 		case "up", "k":
 			if m.scroll > 0 {
 				m.scroll--
 			}
 		case "down", "j":
-			if n := m.checkCount(); m.scroll < n-1 {
+			if m.scroll < n-1 {
 				m.scroll++
+			}
+		case "pgup", "ctrl+u":
+			m.scroll -= visible / 2
+			if m.scroll < 0 {
+				m.scroll = 0
+			}
+		case "pgdn", "ctrl+d":
+			m.scroll += visible / 2
+			if m.scroll > n-1 {
+				m.scroll = n - 1
+			}
+			if m.scroll < 0 {
+				m.scroll = 0
 			}
 		case "q", "esc":
 			return m, func() tea.Msg { return DiscardMsg{} }
 		}
 	}
 	return m, nil
+}
+
+func (m PrecheckModel) visibleRows() int {
+	v := m.height - 9 // title(2) + indicator(1) + summary(2) + log(1) + status(1) + padding(2)
+	if v < 1 {
+		v = 1
+	}
+	return v
 }
 
 func (m PrecheckModel) View() string {
@@ -117,7 +157,7 @@ func (m PrecheckModel) View() string {
 		if m.title == "Verify" {
 			running = "Running health check… (read-only, requires sudo)"
 		}
-		b.WriteString("\n  " + running + "\n")
+		b.WriteString("\n  " + m.spinner.View() + "  " + running + "\n")
 		return b.String()
 	}
 
@@ -128,10 +168,15 @@ func (m PrecheckModel) View() string {
 
 	if m.result != nil || m.verifyResult != nil {
 		rows := m.renderChecks()
-		visible := m.height - 5
-		if visible < 1 {
-			visible = 1
+		visible := m.visibleRows()
+
+		// Scroll-above indicator
+		if m.scroll > 0 {
+			b.WriteString(styleKeyHint.Render(fmt.Sprintf("  ↑  %d more above\n", m.scroll)))
+		} else {
+			b.WriteByte('\n')
 		}
+
 		end := m.scroll + visible
 		if end > len(rows) {
 			end = len(rows)
@@ -148,6 +193,14 @@ func (m PrecheckModel) View() string {
 			b.WriteByte('\n')
 		}
 
+		// Scroll-below indicator
+		remaining := len(rows) - end
+		if remaining > 0 {
+			b.WriteString(styleKeyHint.Render(fmt.Sprintf("  ↓  %d more below\n", remaining)))
+		} else {
+			b.WriteByte('\n')
+		}
+
 		b.WriteString(styleDivider.Render(strings.Repeat("─", max(m.width, 40))))
 		b.WriteByte('\n')
 		if m.result != nil {
@@ -158,6 +211,7 @@ func (m PrecheckModel) View() string {
 			} else {
 				b.WriteString(styleError.Render(summary + "  — resolve blockers before continuing"))
 			}
+			b.WriteByte('\n')
 		} else if m.verifyResult != nil {
 			v := m.verifyResult
 			summary := fmt.Sprintf("  %d passed  %d warning(s)  %d failure(s)", v.Passes, v.Warnings, v.Failures)
@@ -166,12 +220,16 @@ func (m PrecheckModel) View() string {
 			} else {
 				b.WriteString(styleError.Render(summary))
 			}
+			b.WriteByte('\n')
+			if v.LogPath != "" {
+				b.WriteString(styleKeyHint.Render(fmt.Sprintf("  Log: %s", v.LogPath)))
+				b.WriteByte('\n')
+			}
 		}
-		b.WriteByte('\n')
 	}
 
 	b.WriteString(styleStatusBar.Render(
-		hint("↑↓", "scroll") + "  " + hint("q", "back to menu"),
+		hint("↑↓/PgUp/PgDn", "scroll") + "  " + hint("q", "back to menu"),
 	))
 	return b.String()
 }
@@ -222,12 +280,16 @@ func (m PrecheckModel) renderChecks() []string {
 			valStyle = func(s string) string { return styleFieldValue.Render(s) }
 		case ops.StatusWarn:
 			prefix = "  [WARN] "
-			valStyle = func(s string) string { return styleStatusBar.Render(s) }
+			valStyle = func(s string) string { return styleFieldModified.Render(s) }
 		case ops.StatusBlocker:
-			prefix = "  [BLOK] "
+			if m.title == "Verify" {
+				prefix = "  [FAIL] "
+			} else {
+				prefix = "  [BLOK] "
+			}
 			valStyle = func(s string) string { return styleError.Render(s) }
 		default:
-			prefix = "         "
+			prefix = "  [INFO] "
 			valStyle = func(s string) string { return styleKeyHint.Render(s) }
 		}
 

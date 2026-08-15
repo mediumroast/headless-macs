@@ -145,7 +145,7 @@ func (r *UpdateResult) updateOllama() {
 	}
 
 	// Capture version before so we can detect whether the binary changed.
-	verBefore := strings.TrimSpace(run("ollama", "--version"))
+	verBefore := ollamaVersion()
 
 	// Run upstream installer. On headless servers the script always exits non-zero
 	// because it tries to launch Ollama.app via GUI (RBSRequestErrorDomain Code=5).
@@ -157,7 +157,7 @@ func (r *UpdateResult) updateOllama() {
 	cmd.Stderr = io.Discard
 	_ = cmd.Run() // intentionally ignored — GUI launch always fails headless
 
-	verAfter := strings.TrimSpace(run("ollama", "--version"))
+	verAfter := ollamaVersion()
 	if verAfter != "" && verAfter != verBefore {
 		r.add(sec, ActionSet, "Ollama updated: "+verBefore+" → "+verAfter, "")
 	} else if verAfter != "" {
@@ -335,4 +335,17 @@ func (r *UpdateResult) updateExo() {
 	} else {
 		r.add(sec, ActionWarn, "Exo plist not found — run Install Tools first", plist)
 	}
+}
+
+// ollamaVersion returns just the semver string from `ollama --version`,
+// stripping warning lines printed when the daemon is not running.
+func ollamaVersion() string {
+	out, _ := exec.Command("ollama", "--version").Output()
+	for _, line := range strings.Split(string(out), "\n") {
+		// "ollama version is 0.32.13" or "Warning: client version is 0.32.13"
+		if idx := strings.Index(line, "version is "); idx >= 0 {
+			return strings.TrimSpace(line[idx+len("version is "):])
+		}
+	}
+	return ""
 }

@@ -44,9 +44,13 @@ type App struct {
 // NewApp creates the App. cfg is the loaded config (or nil on first run,
 // in which case Bootstrap should already have created the file before NewApp
 // is called).
-func NewApp(cfg *config.Config) App {
+func NewApp(cfg *config.Config, firstRun bool) App {
+	startScreen := screenMenu
+	if firstRun {
+		startScreen = screenConfigEditor
+	}
 	return App{
-		screen:       screenConfigEditor,
+		screen:       startScreen,
 		configEditor: NewConfigEditor(cfg),
 		menu:         NewMenu(),
 		cfg:          cfg,

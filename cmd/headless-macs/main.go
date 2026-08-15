@@ -27,6 +27,7 @@ func main() {
 
 	// First-run bootstrap: copy template to ~/.headless_macs/config.json if absent
 	cfgPath := config.UserConfigPath()
+	firstRun := false
 	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
 		if templatePath == "" {
 			fmt.Fprintln(os.Stderr, "ERROR: config.json template not found. Run from the headless-macs repo directory.")
@@ -37,6 +38,7 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("Created config: %s\n", cfgPath)
+		firstRun = true
 	}
 
 	cfg, err := config.Load()
@@ -45,7 +47,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	app := tui.NewApp(cfg)
+	app := tui.NewApp(cfg, firstRun)
 	p := tea.NewProgram(app, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)

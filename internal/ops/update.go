@@ -134,6 +134,15 @@ func (r *UpdateResult) updateOllama() {
 		r.add(sec, ActionInfo, "com.ollama.server not running — continuing", "")
 	}
 
+	// Remove stale app bundle — installer tries to rm it without sudo and fails
+	if _, err := os.Stat("/Applications/Ollama.app"); err == nil {
+		if err := os.RemoveAll("/Applications/Ollama.app"); err != nil {
+			r.add(sec, ActionWarn, "Could not remove /Applications/Ollama.app: "+err.Error(), "")
+		} else {
+			r.add(sec, ActionSet, "Removed /Applications/Ollama.app", "")
+		}
+	}
+
 	// Run upstream installer (best-effort — always re-bootstrap regardless of result)
 	r.add(sec, ActionInfo, "Running Ollama installer…", "")
 	cmd := exec.Command("/bin/sh", "-c", "curl -fsSL https://ollama.com/install.sh | sh")

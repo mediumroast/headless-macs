@@ -2,7 +2,7 @@
 
 Configure an Apple Silicon Mac as a production-grade LLM inference node — all from a single interactive TUI binary.
 
-**v2.0.0** replaces the bash pipeline with a Go binary (`headless-macs`) that runs precheck, storage setup, system baseline, tool installation, health check, restore, and update from one menu. The shell scripts remain in the repo for reference but are no longer maintained.
+**v2.1.0** replaces the bash pipeline with a Go binary (`headless-macs`) that runs precheck, storage setup, system baseline, tool installation, health check, restore, and update — interactively via TUI or non-interactively via CLI subcommands. The shell scripts remain in the repo for reference but are no longer maintained.
 
 **Supported tools:** Ollama · Rapid-MLX · mlx-lm · Infinity · Exo
 
@@ -20,9 +20,17 @@ cd headless-macs
 # 2. Build the binary
 go build -o headless-macs ./cmd/headless-macs
 
-# 3. Run — first launch copies config.json to ~/.headless_macs/config.json
+# 3a. Interactive TUI — first launch copies config.json to ~/.headless_macs/config.json
 sudo ./headless-macs
+
+# 3b. Or non-interactively (headless/SSH/cron)
+sudo ./headless-macs precheck
+sudo ./headless-macs baseline
+sudo ./headless-macs install-tools
+sudo ./headless-macs verify
 ```
+
+### Interactive TUI
 
 The TUI menu appears. Recommended run order:
 
@@ -36,6 +44,25 @@ The TUI menu appears. Recommended run order:
 | 6 | `v` | Verify — health check of everything installed |
 
 Press `q` at any time to return to the menu or quit.
+
+### Headless / CLI mode
+
+Every operation is available as a subcommand for scripting, cron, or remote SSH automation:
+
+```bash
+sudo headless-macs precheck        # Read-only audit — no changes
+sudo headless-macs baseline        # Apply system settings (pmset, sysctl, SSH, daemons)
+sudo headless-macs install-tools   # Install/configure serving stack
+sudo headless-macs verify          # Health check
+sudo headless-macs update-tools    # In-place binary upgrades
+sudo headless-macs storage         # External volume setup
+sudo headless-macs restore         # Undo everything
+
+sudo headless-macs --help          # Show all commands and options
+sudo headless-macs --version       # Print version and exit
+```
+
+Output uses the same `[SET]`/`[SKIP]`/`[WARN]`/`[PASS]`/`[FAIL]` prefix convention as the v1 shell scripts, teed to `/var/log/mac-llm-setup/`. Exit codes: `0` = success, `1` = failures, `2` = warnings only.
 
 ---
 
@@ -180,7 +207,8 @@ Model:    qwen3-coder-next-256k         (chat — use Opilot or Copilot)
 **Machine sleeps despite System Baseline**
 ```bash
 pmset -g | grep -E "sleep|disablesleep|powermode"
-sudo ./headless-macs    # → b (System Baseline, idempotent — safe to re-run)
+sudo ./headless-macs baseline          # CLI — idempotent, safe to re-run
+sudo ./headless-macs                   # TUI → b (System Baseline)
 ```
 
 **Ollama daemon not starting**
@@ -191,12 +219,20 @@ tail -50 /var/log/ollama/stderr.log
 
 **Update Ollama to the latest version**
 ```bash
-sudo ./headless-macs    # → u (Update Tools)
+sudo ./headless-macs update-tools      # CLI
+sudo ./headless-macs                   # TUI → u (Update Tools)
+```
+
+**Run a health check**
+```bash
+sudo ./headless-macs verify            # CLI — exits 0/1/2
+sudo ./headless-macs                   # TUI → v (Verify)
 ```
 
 **Something went wrong — clean slate**
 ```bash
-sudo ./headless-macs    # → r (Restore), then reboot
+sudo ./headless-macs restore           # CLI
+sudo ./headless-macs                   # TUI → r (Restore), then reboot
 ```
 
 **Disable SIP (required for full service suppression on macOS 26 Tahoe — Apple Silicon)**

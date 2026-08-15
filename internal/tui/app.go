@@ -112,6 +112,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case RestoreConfirmedMsg:
 		a.runScreen = NewRunScreen("Restore")
+		a.runScreen.width, a.runScreen.height = a.width, a.height
 		a.screen = screenRestore
 		return a, tea.Batch(runRestoreCmd(), a.runScreen.spinner.Tick)
 
@@ -187,30 +188,37 @@ func (a App) handleMenuSelect(idx int) (tea.Model, tea.Cmd) {
 		return a, nil
 	case "p":
 		a.precheck = NewPrecheckModel()
+		a.precheck.width, a.precheck.height = a.width, a.height
 		a.screen = screenPrecheck
 		return a, tea.Batch(runPrecheckCmd(a.cfg), a.precheck.spinner.Tick)
 	case "b":
 		a.runScreen = NewRunScreen("System Baseline")
+		a.runScreen.width, a.runScreen.height = a.width, a.height
 		a.screen = screenBaseline
 		return a, tea.Batch(runBaselineCmd(a.cfg), a.runScreen.spinner.Tick)
 	case "t":
 		a.runScreen = NewRunScreen("Storage Setup")
+		a.runScreen.width, a.runScreen.height = a.width, a.height
 		a.screen = screenStorage
 		return a, tea.Batch(runStorageCmd(a.cfg), a.runScreen.spinner.Tick)
 	case "i":
 		a.runScreen = NewRunScreen("Install Tools")
+		a.runScreen.width, a.runScreen.height = a.width, a.height
 		a.screen = screenTools
 		return a, tea.Batch(runToolsCmd(a.cfg), a.runScreen.spinner.Tick)
 	case "v":
 		a.precheck = NewVerifyModel()
+		a.precheck.width, a.precheck.height = a.width, a.height
 		a.screen = screenVerify
 		return a, tea.Batch(runVerifyCmd(a.cfg), a.precheck.spinner.Tick)
 	case "r":
 		a.restoreConfirm = NewRestoreConfirmModel()
+		a.restoreConfirm.width, a.restoreConfirm.height = a.width, a.height
 		a.screen = screenRestoreConfirm
 		return a, nil
 	case "u":
 		a.runScreen = NewRunScreen("Update Tools")
+		a.runScreen.width, a.runScreen.height = a.width, a.height
 		a.screen = screenUpdate
 		return a, tea.Batch(runUpdateCmd(a.cfg), a.runScreen.spinner.Tick)
 	default:

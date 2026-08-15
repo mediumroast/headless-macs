@@ -146,9 +146,10 @@ func (r *UpdateResult) updateOllama() {
 
 	// Run upstream installer (best-effort — always re-bootstrap regardless of result)
 	r.add(sec, ActionInfo, "Running Ollama installer…", "")
+	var installStderr strings.Builder
 	cmd := exec.Command("/bin/sh", "-c", "curl -fsSL https://ollama.com/install.sh | sh")
 	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	cmd.Stderr = &installStderr
 	installOK := cmd.Run() == nil
 	if installOK {
 		r.add(sec, ActionSet, "Ollama installer complete", "")
@@ -158,8 +159,15 @@ func (r *UpdateResult) updateOllama() {
 		_ = exec.Command("pkill", "-f", "Ollama.app").Run()
 		r.add(sec, ActionSet, "Login item removed (daemon manages startup)", "")
 	} else {
-		r.add(sec, ActionWarn, "Ollama installer failed — re-bootstrapping existing binary",
-			"To update manually: curl -fsSL https://ollama.com/install.sh | sh")
+		errSnip := strings.TrimSpace(installStderr.String())
+		if len(errSnip) > 300 {
+			errSnip = errSnip[len(errSnip)-300:]
+		}
+		detail := "To update manually: curl -fsSL https://ollama.com/install.sh | sh"
+		if errSnip != "" {
+			detail = "Installer error: " + errSnip + "\n" + detail
+		}
+		r.add(sec, ActionWarn, "Ollama installer failed — re-bootstrapping existing binary", detail)
 	}
 
 	// Re-bootstrap regardless — daemon was stopped above and must come back up

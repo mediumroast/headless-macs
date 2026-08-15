@@ -13,6 +13,43 @@ _Changes on the current branch not yet merged to main._
 
 ---
 
+## [2.0.0] — 2026-08-15
+
+Phase 6: Go rewrite. Replaces the bash pipeline with a single compiled binary and interactive Bubble Tea TUI.
+
+### Added
+
+- **`cmd/headless-macs/`** — Go binary entry point. Bootstraps `~/.headless_macs/config.json` on first run; opens the TUI with `tea.WithAltScreen`.
+- **`internal/config/`** — typed config schema matching `config.json`; `Load`/`Save`/`Bootstrap` functions; `UserConfigPath()` returning `~/.headless_macs/config.json`.
+- **`internal/log/`** — structured log writer that mirrors the shell pipeline prefix conventions (`[SET]`, `[SKIP]`, `[WARN]`, `[FAIL]`, `[PASS]`, etc.) and tees to timestamped files under `/var/log/mac-llm-setup/`.
+- **`internal/ops/precheck.go`** — port of `precheck.sh`; `RunPrecheck()` returns `*PrecheckResult` with a `[]CheckItem` list; writes `/tmp/mac-llm-precheck.json`.
+- **`internal/ops/baseline.go`** — port of `setup.sh`; `RunBaseline()` with `BaselineOptions`; all 8 sections (power, sysctl, service suppression, UI defaults, SSH, Spotlight, Xcode CLT, firewall).
+- **`internal/ops/storage.go`** — port of `storage-volume.sh`; `RunStorage()` with diskutil integration, volume ownership, Spotlight exclusion, fstab entry, and `com.llm-server.storage-mount` LaunchDaemon.
+- **`internal/ops/tools.go`** — port of `install-tools.sh`; `RunTools()` creates `_llmserver` service account (UID/GID 400–499), writes LaunchDaemon plists for all 5 tools, and runs `loadDaemon()`; Ollama RAM auto-tuning via `ollamaAutoTune(ramGB)`.
+- **`internal/ops/verify.go`** — port of `verify.sh`; `RunVerify()` returns `*VerifyResult` with `[]CheckItem`; helpers `checkPmset`, `checkSysctl`, `checkDaemon`, `checkHTTP`.
+- **`internal/ops/restore.go`** — port of `restore.sh`; `RunRestore()` in 9 sections; reads service snapshot for re-enable; removes `_llmserver` account and home.
+- **`internal/ops/update.go`** — port of `update-tools.sh`; `RunUpdateTools()` with per-tool stop → upgrade → re-bootstrap pattern.
+- **`internal/tui/`** — Bubble Tea TUI package:
+  - `app.go` — top-level `App` model; screen routing; `spinner.TickMsg` forwarding.
+  - `menu.go` — main menu with single-key shortcuts; all 8 ops items ready.
+  - `config_editor.go` — scrollable config editor with bool toggle, text/int inline editing, live modified indicator, and save/reset/cancel.
+  - `precheck_screen.go` — shared model for Precheck and Verify; spinner; scroll indicators; `[BLOK]` vs `[FAIL]` prefix by context; log path footer.
+  - `run_screen.go` — shared model for Baseline, Storage, Tools, Restore, Update; spinner; scroll indicators; page up/down; summary bar with counts and log path.
+  - `restore_confirm.go` — confirmation screen before destructive restore; `y` confirms, any other key cancels.
+  - `styles.go` — dark-only Lip Gloss palette.
+
+### Changed
+
+- **`precheck.sh`, `setup.sh`, `install-tools.sh`, `storage-volume.sh`, `verify.sh`, `restore.sh`, `update-tools.sh`, `manage.sh`** — marked deprecated in v2.0.0; all retain their existing functionality but are no longer actively maintained.
+- **`README.md`** — rewritten for v2: Go Quick Start, menu key reference table, updated file structure showing `cmd/` and `internal/`, v2 troubleshooting commands.
+- **`CLAUDE.md`** — versioning history updated; deprecated script list extended to cover v1 shell pipeline.
+
+### PR
+
+_#4 Phase 6: Go rewrite — TUI binary replaces shell pipeline (link after merge)_
+
+---
+
 ## [1.2.0] — 2026-06-14
 
 Phase 5: Security hardening, operational improvements, Ollama lifecycle management, and unprivileged daemon execution.
@@ -133,7 +170,8 @@ Initial release: single-script pmset + Ollama LaunchDaemon setup.
 
 ---
 
-[Unreleased]: https://github.com/miha42-github/headless-macs/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/miha42-github/headless-macs/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/miha42-github/headless-macs/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/miha42-github/headless-macs/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/miha42-github/headless-macs/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/miha42-github/headless-macs/compare/v0.2.0...v1.0.0

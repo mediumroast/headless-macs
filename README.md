@@ -1,10 +1,12 @@
-# Mac LLM Optimizer
+# headless-macs
 
-Configure an Apple Silicon Mac as a production-grade LLM inference node. Idempotent bash scripts that set up power management, network tuning, service suppression, and one or more serving tools — all driven by a single `config.json`.
+Configure an Apple Silicon Mac as a production-grade LLM inference node — all from a single interactive TUI binary.
+
+**v2.0.0** replaces the bash pipeline with a Go binary (`headless-macs`) that runs precheck, storage setup, system baseline, tool installation, health check, restore, and update from one menu. The shell scripts remain in the repo for reference but are no longer maintained.
 
 **Supported tools:** Ollama · Rapid-MLX · mlx-lm · Infinity · Exo
 
-**Requires:** Apple Silicon (M1 or later) · macOS 15 Sequoia or 26 Tahoe · Homebrew
+**Requires:** Apple Silicon (M1 or later) · macOS 15 Sequoia or 26 Tahoe · Homebrew · Go 1.22+
 
 ---
 
@@ -15,28 +17,25 @@ Configure an Apple Silicon Mac as a production-grade LLM inference node. Idempot
 git clone https://github.com/miha42-github/headless-macs.git
 cd headless-macs
 
-# 2. Make scripts executable
-chmod +x *.sh scripts/*.sh
+# 2. Build the binary
+go build -o headless-macs ./cmd/headless-macs
 
-# 3. Audit your system — read-only, no changes, no sudo
-./precheck.sh
-
-# 4. Review precheck output. If you want an external volume for model storage:
-#    Edit config.json → set storage.use_external_volume: true
-#    Then run (requires sudo):
-sudo ./storage-volume.sh
-
-# 5. Edit config.json to enable/configure your tools (Ollama is on by default)
-
-# 6. Apply system baseline — pmset, network tuning, service suppression, SSH
-sudo ./setup.sh
-
-# 7. Install and start serving tools
-sudo ./install-tools.sh
-
-# 8. Verify everything is healthy
-./verify.sh
+# 3. Run — first launch copies config.json to ~/.headless_macs/config.json
+sudo ./headless-macs
 ```
+
+The TUI menu appears. Recommended run order:
+
+| Step | Menu key | What it does |
+|---|---|---|
+| 1 | `p` | Precheck — read-only audit, no sudo needed |
+| 2 | `c` | Edit Config — enable tools, set storage options |
+| 3 | `t` | Storage Setup — external volume (if enabled) |
+| 4 | `b` | System Baseline — pmset, sysctl, services, SSH |
+| 5 | `i` | Install Tools — daemons for enabled tools |
+| 6 | `v` | Verify — health check of everything installed |
+
+Press `q` at any time to return to the menu or quit.
 
 ---
 
@@ -50,7 +49,7 @@ sudo ./install-tools.sh
 | **Infinity** | Embeddings + reranking for RAG pipelines | 7997 | MPS-accelerated. OpenAI-compatible `/v1/embeddings` and `/v1/rerank`. |
 | **Exo** | Multi-Mac distributed inference | 52415 | Pools unified memory across devices. Requires auto-login. |
 
-Enable tools in `config.json`:
+Enable tools through the **Edit Config** screen (`c` from the menu), or by editing `~/.headless_macs/config.json` directly:
 
 ```json
 {
@@ -66,7 +65,7 @@ Enable tools in `config.json`:
 
 See [`docs/tool-comparison.md`](docs/tool-comparison.md) for a full comparison.
 
-> **Network defaults:** Services bind to `localhost` (`127.0.0.1`) by default and the firewall is left enabled. If your inference clients are on other LAN hosts, set `"localhost_only": false` in `config.json`. If you run unsigned Python services (Rapid-MLX, mlx-lm, Infinity) and cannot manage per-app firewall rules, also set `"disable_firewall": true` — only do this on an isolated trusted network.
+> **Network defaults:** Services bind to `localhost` (`127.0.0.1`) by default and the firewall is left enabled. Set `"localhost_only": false` to allow LAN clients. If you run unsigned Python services (Rapid-MLX, mlx-lm, Infinity) and cannot manage per-app firewall rules, also set `"disable_firewall": true` — only do this on an isolated trusted network.
 
 ---
 
@@ -82,7 +81,7 @@ See [`docs/tool-comparison.md`](docs/tool-comparison.md) for a full comparison.
 | Mac Studio M4 Ultra | 192 GB | `qwen3:235b` Q4 (142 GB) · multiple large models simultaneously |
 | Mac Pro M2 Ultra | 192 GB | Same as Studio M4 Ultra |
 
-`install-tools.sh` automatically tunes Ollama's `MAX_LOADED_MODELS`, `NUM_PARALLEL`, and `MAX_CONTEXT` based on detected RAM. See [`docs/ram-sizing.md`](docs/ram-sizing.md).
+Install Tools automatically tunes Ollama's `MAX_LOADED_MODELS`, `NUM_PARALLEL`, and `MAX_CONTEXT` based on detected RAM. See [`docs/ram-sizing.md`](docs/ram-sizing.md).
 
 ---
 
@@ -90,21 +89,15 @@ See [`docs/tool-comparison.md`](docs/tool-comparison.md) for a full comparison.
 
 ```
 headless-macs/
-├── config.json            # All tuning parameters — edit this first
-├── precheck.sh            # Read-only system audit — run first, no sudo
-├── setup.sh               # System baseline: pmset, sysctl, services, SSH
-├── install-tools.sh       # Serving stack: Ollama, Rapid-MLX, mlx-lm, Infinity, Exo
-├── storage-volume.sh      # External volume setup and symlink wiring
-├── verify.sh              # Health check report — run any time
-├── restore.sh             # Undo all changes made by setup.sh
-├── manage.sh              # Component orchestrator (Homebrew, Colima, legacy ops)
-├── lib/
-│   └── common.sh          # Shared utility functions
-├── scripts/
-│   ├── power_management.sh
-│   ├── homebrew_setup.sh
-│   ├── ollama_setup.sh
-│   └── colima_setup.sh
+├── cmd/
+│   └── headless-macs/
+│       └── main.go            # Binary entry point
+├── internal/
+│   ├── config/                # Config load/save, schema, bootstrap
+│   ├── ops/                   # All system operations (precheck, baseline, tools, etc.)
+│   ├── tui/                   # Bubble Tea TUI (menu, screens, styles)
+│   └── log/                   # Structured log writer
+├── config.json                # Config template (copied to ~/.headless_macs/ on first run)
 ├── modelfiles/
 │   ├── qwen3-coder-next-256k-agent.modelfile  # Agent variant: low temp, tool rules
 │   ├── qwen3-coder-next-256k.modelfile        # Chat variant: higher temp
@@ -115,120 +108,19 @@ headless-macs/
 │   ├── ram-sizing.md       # Model size × quantisation × RAM + KV cache reference
 │   ├── storage-guide.md    # External volume: APFS, fstab, symlink map
 │   └── known-issues.md     # Workarounds for common problems
+│
+│   Shell scripts (v1 — deprecated, still functional):
+├── precheck.sh            # → Precheck menu item
+├── setup.sh               # → System Baseline menu item
+├── install-tools.sh       # → Install Tools menu item
+├── storage-volume.sh      # → Storage Setup menu item
+├── verify.sh              # → Verify menu item
+├── restore.sh             # → Restore menu item
+├── update-tools.sh        # → Update Tools menu item
+├── manage.sh              # Phase 2 orchestrator (legacy)
 ├── pmset_to_ollama.sh     # [DEPRECATED]
 └── setup_colima.sh        # [DEPRECATED]
 ```
-
----
-
-## Script Reference
-
-### `precheck.sh` — System Audit
-
-No sudo. No changes. Run this first on any new machine.
-
-```bash
-./precheck.sh
-```
-
-Checks: hardware identity · RAM capability · macOS version · SIP · FileVault · auto-login · Xcode CLT · Homebrew · Python · port availability · storage · current pmset state
-
-Writes `/tmp/mac-llm-precheck.json` for downstream scripts.
-
-Exit codes: `0` = ready · `1` = blockers · `2` = warnings only
-
----
-
-### `setup.sh` — System Baseline
-
-Requires sudo. Idempotent — safe to run multiple times.
-
-```bash
-sudo ./setup.sh
-```
-
-- Power management: all pmset settings (including `autorestart` for power-failure recovery), caffeinate LaunchDaemon, MacBook clamshell warning
-- Network: TCP buffer sizes via a `RunAtLoad` LaunchDaemon (persists across reboots)
-- Service suppression: Spotlight, telemetry, Siri, iCloud, Biome (SIP-gated)
-- UI: AirDrop, App Nap, animations, notifications, software update, Time Machine
-- SSH: enables Remote Login, hardens sshd via a drop-in file at `/etc/ssh/sshd_config.d/100-headless.conf` (survives macOS updates)
-- Xcode CLT: headless install via `softwareupdate`
-
-A daily launchd timer (`com.llm-server.pmset-heal`) automatically re-applies power settings after macOS updates. Manual re-run still works.
-
----
-
-### `storage-volume.sh` — External Volume Setup
-
-Requires sudo. Only runs if `storage.use_external_volume: true` in `config.json`.
-
-```bash
-sudo ./storage-volume.sh
-```
-
-- Detects volume by label (from precheck cache or live diskutil); mounts it automatically if it exists but is not currently mounted
-- Validates filesystem (rejects ExFAT/FAT32/NTFS)
-- Enables volume ownership (required for `_llmserver` permissions)
-- Creates directory layout: `ollama/`, `rapid-mlx/`, `mlx-lm/`, `infinity/`, `exo/`, `gguf/` — owned by `_llmserver`
-- Excludes volume from Spotlight
-- Wires `/Library` symlinks so `install-tools.sh` needs no changes
-- Adds fstab entry for boot-time auto-mount
-- Installs `com.llm-server.storage-mount` LaunchDaemon that mounts and re-enables ownership at boot, retrying through early boot and every 5 minutes if needed
-
-Idempotent: safe to re-run after any macOS update or hardware change.
-
-See [`docs/storage-guide.md`](docs/storage-guide.md).
-
----
-
-### `install-tools.sh` — Tool Installation
-
-Requires sudo. Each tool is gated by its `enabled` flag in `config.json`.
-
-```bash
-sudo ./install-tools.sh
-```
-
-Ollama is the only tool enabled by default. Enable others in `config.json` before running.
-
-**Log locations:**
-
-| Tool | Stdout | Stderr |
-|---|---|---|
-| Ollama | `/var/log/ollama/stdout.log` | `/var/log/ollama/stderr.log` |
-| Rapid-MLX | `/var/log/rapid-mlx/stdout.log` | `/var/log/rapid-mlx/stderr.log` |
-| mlx-lm | `/var/log/mlx-lm/stdout.log` | `/var/log/mlx-lm/stderr.log` |
-| Infinity | `/var/log/infinity/stdout.log` | `/var/log/infinity/stderr.log` |
-| Exo | `/tmp/exo-stdout.log` | `/tmp/exo-stderr.log` |
-
----
-
-### `verify.sh` — Health Check
-
-No changes made. Exit `0` = all clear · `1` = failures · `2` = warnings only.
-
-```bash
-./verify.sh
-```
-
-Checks: pmset values · caffeinate daemon · Spotlight · SSH · sysctl · per-tool daemon state · API endpoints · model count · memory pressure
-
----
-
-### `restore.sh` — Undo All Changes
-
-Requires sudo. Reverses everything `setup.sh` and `install-tools.sh` did.
-
-```bash
-sudo ./restore.sh
-```
-
-- Removes all LaunchDaemon and LaunchAgent plists
-- Restores pmset to safe defaults
-- Re-enables suppressed services from the pre-change snapshot
-- Restores Spotlight, `sshd_config`, `defaults` changes, `sysctl.conf` entries
-
-Prompts for confirmation before making changes. Recommends a reboot when done.
 
 ---
 
@@ -237,9 +129,6 @@ Prompts for confirmation before making changes. Recommends a reboot when done.
 ### Pull your first Ollama model
 
 ```bash
-# Check what models suit your hardware
-./precheck.sh | grep -A10 "MODEL CAPABILITY"
-
 # Pull a model — examples by RAM tier:
 ollama pull qwen3:8b               # 16 GB — best general at this size
 ollama pull qwen3:14b              # 24 GB — fast, 128K context
@@ -251,19 +140,17 @@ ollama pull deepseek-r1:70b        # 64 GB+ — leading open reasoning model
 # Test inference
 ollama run qwen3:8b "write hello world in python"
 
-# Verify the stack
-./verify.sh
+# Re-run Verify to confirm the daemon is healthy after model pull
+sudo ./headless-macs    # → v (Verify)
 ```
 
 See [`docs/ram-sizing.md`](docs/ram-sizing.md) for full model recommendations by hardware tier.
 
 ### Register production Modelfiles
 
-Modelfiles bake `num_ctx` and sampling parameters into model metadata so clients see
-the correct context window. Without a Modelfile, clients read the model card default.
+Modelfiles bake `num_ctx` and sampling parameters into model metadata so clients see the correct context window.
 
 ```bash
-# Register the production Modelfiles (update FROM path if GGUF is stored elsewhere)
 ollama create qwen3-coder-next-256k-agent -f modelfiles/qwen3-coder-next-256k-agent.modelfile
 ollama create qwen3-coder-next-256k       -f modelfiles/qwen3-coder-next-256k.modelfile
 ollama create qwen3-coder-next-128k       -f modelfiles/qwen3-coder-next-128k.modelfile
@@ -273,66 +160,7 @@ curl -s http://localhost:11434/api/generate \
   -d '{"model": "qwen3-coder-next-256k-agent", "keep_alive": -1}' > /dev/null
 ```
 
-See [`docs/modelfile-guide.md`](docs/modelfile-guide.md) for parameter rationale and
-the two-model split pattern (agent vs chat).
-
-### Serve a fine-tuned model with Rapid-MLX
-
-Rapid-MLX loads a single model at startup and holds it in memory. It does not support
-loading LoRA adapters at runtime — merge the adapter into the base model first using
-`mlx_lm.fuse`, then point Rapid-MLX at the merged checkpoint.
-
-**Step 1 — Fuse the adapter into the base model (one-time)**
-
-```bash
-python -m mlx_lm.fuse \
-  --model mlx-community/your-base-model-4bit \
-  --adapter-path /path/to/lora-adapter \
-  --save-path /Volumes/LLMStorage/models/my-fused-model
-```
-
-This writes a complete MLX model checkpoint to disk. Run it once per adapter version;
-the result is a static directory of weights that loads exactly like any other MLX model.
-
-**Step 2 — Point Rapid-MLX at the merged checkpoint**
-
-Edit `config.json`:
-
-```json
-"rapid_mlx": {
-  "enabled": true,
-  "model": "/Volumes/LLMStorage/models/my-fused-model"
-}
-```
-
-Rapid-MLX accepts either a HuggingFace repo ID (`mlx-community/model-name`) or an
-absolute local path.
-
-**Step 3 — Reload the daemon**
-
-```bash
-sudo ./install-tools.sh
-```
-
-This rewrites the plist with the new model path and restarts the daemon.
-The model loads into RAM on startup — no merging happens at runtime.
-
-**Updating to a new adapter version**
-
-```bash
-# Fuse new version
-python -m mlx_lm.fuse \
-  --model mlx-community/your-base-model-4bit \
-  --adapter-path /path/to/lora-adapter-v2 \
-  --save-path /Volumes/LLMStorage/models/my-fused-model-v2
-
-# Update config.json model path, then reload
-sudo ./install-tools.sh
-```
-
-**Note:** Rapid-MLX serves one model per instance. For general inference alongside
-a fine-tune, run Ollama on port 11434 and Rapid-MLX on port 8000 — each handles
-its own model independently.
+See [`docs/modelfile-guide.md`](docs/modelfile-guide.md) for parameter rationale and the agent vs chat split pattern.
 
 ### Point a coding agent at Ollama
 
@@ -343,27 +171,16 @@ Model:    qwen3-coder-next-256k-agent   (agentic tasks — use Zoo Code)
 Model:    qwen3-coder-next-256k         (chat — use Opilot or Copilot)
 ```
 
-**Note:** VS Code Copilot agent mode has a known tool call loop bug with local GGUF models.
-Use Zoo Code for agentic tasks. See [`docs/known-issues.md`](docs/known-issues.md).
-
-### Run containers alongside Ollama (Colima)
-
-```bash
-./manage.sh install colima
-
-# Containers can reach host Ollama at:
-# http://host.docker.internal:11434
-docker run -e OLLAMA_BASE_URL=http://host.docker.internal:11434 myapp
-```
+**Note:** VS Code Copilot agent mode has a known tool call loop bug with local GGUF models. Use Zoo Code for agentic tasks. See [`docs/known-issues.md`](docs/known-issues.md).
 
 ---
 
 ## Troubleshooting
 
-**Machine sleeps despite setup.sh**
+**Machine sleeps despite System Baseline**
 ```bash
 pmset -g | grep -E "sleep|disablesleep|powermode"
-sudo ./setup.sh   # idempotent — safe to re-run
+sudo ./headless-macs    # → b (System Baseline, idempotent — safe to re-run)
 ```
 
 **Ollama daemon not starting**
@@ -374,20 +191,17 @@ tail -50 /var/log/ollama/stderr.log
 
 **Update Ollama to the latest version**
 ```bash
-sudo ./update-tools.sh ollama
-# or via manage.sh:
-sudo ./manage.sh update ollama
+sudo ./headless-macs    # → u (Update Tools)
 ```
 
 **Something went wrong — clean slate**
 ```bash
-sudo ./restore.sh
-# then reboot
+sudo ./headless-macs    # → r (Restore), then reboot
 ```
 
 **Disable SIP (required for full service suppression on macOS 26 Tahoe — Apple Silicon)**
 
-`setup.sh` warns and runs safely with SIP enabled, but some service-disable calls need SIP off to persist across reboots.
+System Baseline warns and runs safely with SIP enabled, but some service-disable calls need SIP off to persist across reboots.
 
 1. Shut down the Mac completely
 2. Press and **hold** the power button — keep holding until you see "Loading startup options" or a gear/Options icon appears
@@ -407,9 +221,11 @@ See [`docs/known-issues.md`](docs/known-issues.md) for a full workarounds table.
 ## Contributing
 
 Pull requests welcome. Please ensure:
-- All scripts pass `bash -n <script>` (syntax check)
-- Changes are idempotent — running twice produces `[SKIP]` for already-applied settings
-- New tool plists include `UserName _llmserver`, `HOME=/Library/LLMServer`, and use `bootstrap`/`bootout`
+- `go build ./...` passes with no errors
+- `go vet ./...` produces no warnings
+- New ops stages follow the `BaselineAction` / `XxxResult` pattern in `internal/ops/`
+- New LaunchDaemon plists include `UserName _llmserver`, `HOME=/Library/LLMServer`, and use `bootstrap`/`bootout`
+- All shell script changes are idempotent — running twice produces `[SKIP]` for already-applied settings
 
 ## License
 

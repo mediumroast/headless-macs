@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# DEPRECATED in v2.0.0 — use the headless-macs Go binary instead:
+#   sudo headless-macs          (interactive TUI — "Restore" from the menu)
+# This script remains functional but is no longer actively maintained.
+#
 # restore.sh — Undo All Changes Made by setup.sh and install-tools.sh
 #
 # Reverses every change made by this toolset, returning the Mac to its

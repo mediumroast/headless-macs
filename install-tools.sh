@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# DEPRECATED in v2.0.0 — use the headless-macs Go binary instead:
+#   sudo headless-macs          (interactive TUI — "Install Tools" from the menu)
+# This script remains functional but is no longer actively maintained.
+#
 # install-tools.sh — Serving Stack Installer for Mac LLM Optimizer
 #
 # Installs and configures LLM serving tools as system services.

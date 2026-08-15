@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# DEPRECATED in v2.0.0 — use the headless-macs Go binary instead:
+#   sudo headless-macs          (interactive TUI — "System Baseline" from the menu)
+# This script remains functional but is no longer actively maintained.
+#
 # setup.sh — System Baseline for Mac LLM Optimizer
 #
 # Configures the OS for sustained LLM inference: power management, network

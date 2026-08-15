@@ -29,7 +29,7 @@ var menuItems = []MenuItem{
 	{Label: "Precheck", Key: "p", Ready: true},
 	{Label: "Storage Setup", Key: "t", Ready: true},
 	{Label: "System Baseline", Key: "b", Ready: true},
-	{Label: "Install Tools", Key: "i", Ready: false},
+	{Label: "Install Tools", Key: "i", Ready: true},
 	{Label: "Verify", Key: "v", Ready: false},
 	{Label: "Restore", Key: "r", Ready: false},
 	{Label: "Update Tools", Key: "u", Ready: false},

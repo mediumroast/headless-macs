@@ -40,6 +40,19 @@ func runStorageCmd(cfg *config.Config) tea.Cmd {
 	}
 }
 
+// ToolsDoneMsg is sent when RunTools completes.
+type ToolsDoneMsg struct {
+	Result *ops.ToolsResult
+	Err    error
+}
+
+func runToolsCmd(cfg *config.Config) tea.Cmd {
+	return func() tea.Msg {
+		result, err := ops.RunTools(cfg)
+		return ToolsDoneMsg{Result: result, Err: err}
+	}
+}
+
 type runState int
 
 const (
@@ -55,6 +68,7 @@ type RunScreenModel struct {
 	state         runState
 	result        *ops.BaselineResult
 	storageResult *ops.StorageResult
+	toolsResult   *ops.ToolsResult
 	err           error
 	scroll        int
 	width         int
@@ -80,6 +94,11 @@ func (m RunScreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case StorageDoneMsg:
 		m.storageResult = msg.Result
+		m.err = msg.Err
+		m.state = runStateDone
+
+	case ToolsDoneMsg:
+		m.toolsResult = msg.Result
 		m.err = msg.Err
 		m.state = runStateDone
 
@@ -121,7 +140,7 @@ func (m RunScreenModel) View() string {
 		b.WriteByte('\n')
 	}
 
-	if m.result != nil || m.storageResult != nil {
+	if m.result != nil || m.storageResult != nil || m.toolsResult != nil {
 		rows := m.renderActions()
 		visible := m.height - 5
 		if visible < 1 {
@@ -173,6 +192,9 @@ func (m RunScreenModel) actionCount() int {
 	if m.storageResult != nil {
 		return len(m.storageResult.Actions)
 	}
+	if m.toolsResult != nil {
+		return len(m.toolsResult.Actions)
+	}
 	return 0
 }
 
@@ -183,6 +205,9 @@ func (m RunScreenModel) stageSummary() (sets, skips, warns, fails int, logPath s
 	if m.storageResult != nil {
 		return m.storageResult.Sets, m.storageResult.Skips, m.storageResult.Warnings, m.storageResult.Failures, m.storageResult.LogPath
 	}
+	if m.toolsResult != nil {
+		return m.toolsResult.Sets, m.toolsResult.Skips, m.toolsResult.Warnings, m.toolsResult.Failures, m.toolsResult.LogPath
+	}
 	return
 }
 
@@ -192,6 +217,9 @@ func (m RunScreenModel) stageActions() []ops.BaselineAction {
 	}
 	if m.storageResult != nil {
 		return m.storageResult.Actions
+	}
+	if m.toolsResult != nil {
+		return m.toolsResult.Actions
 	}
 	return nil
 }

@@ -15,6 +15,7 @@ type screen int
 const (
 	screenConfigEditor screen = iota
 	screenMenu
+	screenPrecheck
 )
 
 // App is the top-level Bubble Tea model. It owns the active screen and
@@ -23,6 +24,8 @@ type App struct {
 	screen       screen
 	configEditor ConfigEditorModel
 	menu         MenuModel
+	precheck     PrecheckModel
+	cfg          *config.Config
 	width        int
 	height       int
 	errMsg       string
@@ -36,6 +39,7 @@ func NewApp(cfg *config.Config) App {
 		screen:       screenConfigEditor,
 		configEditor: NewConfigEditor(cfg),
 		menu:         NewMenu(),
+		cfg:          cfg,
 	}
 }
 
@@ -48,28 +52,29 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
-		// Forward to active child
-		switch a.screen {
-		case screenConfigEditor:
-			updated, cmd := a.configEditor.Update(msg)
-			a.configEditor = updated.(ConfigEditorModel)
-			return a, cmd
-		case screenMenu:
-			updated, cmd := a.menu.Update(msg)
-			a.menu = updated.(MenuModel)
-			return a, cmd
-		}
+		// Forward to all children so they resize correctly when switching screens
+		ce, _ := a.configEditor.Update(msg)
+		a.configEditor = ce.(ConfigEditorModel)
+		mn, _ := a.menu.Update(msg)
+		a.menu = mn.(MenuModel)
+		pc, _ := a.precheck.Update(msg)
+		a.precheck = pc.(PrecheckModel)
+		return a, nil
 
 	case SavedMsg:
-		// Config was saved — rebuild config editor with fresh state, go to menu
+		a.cfg = msg.Cfg
 		a.configEditor = NewConfigEditor(msg.Cfg)
 		a.screen = screenMenu
 		return a, nil
 
 	case DiscardMsg:
-		// User cancelled config editor — go to menu
 		a.screen = screenMenu
 		return a, nil
+
+	case PrecheckDoneMsg:
+		updated, cmd := a.precheck.Update(msg)
+		a.precheck = updated.(PrecheckModel)
+		return a, cmd
 
 	case MenuSelectMsg:
 		return a.handleMenuSelect(msg.Index)
@@ -78,6 +83,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			return a, tea.Quit
 		}
+		a.errMsg = "" // clear any previous error on keypress
 		// Delegate to active screen
 		switch a.screen {
 		case screenConfigEditor:
@@ -87,6 +93,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case screenMenu:
 			updated, cmd := a.menu.Update(msg)
 			a.menu = updated.(MenuModel)
+			return a, cmd
+		case screenPrecheck:
+			updated, cmd := a.precheck.Update(msg)
+			a.precheck = updated.(PrecheckModel)
 			return a, cmd
 		}
 	}
@@ -102,8 +112,11 @@ func (a App) handleMenuSelect(idx int) (tea.Model, tea.Cmd) {
 	case "c":
 		a.screen = screenConfigEditor
 		return a, nil
+	case "p":
+		a.precheck = NewPrecheckModel()
+		a.screen = screenPrecheck
+		return a, runPrecheckCmd(a.cfg)
 	default:
-		// Not yet implemented — show a brief message and stay on menu
 		a.errMsg = fmt.Sprintf("%s is not yet implemented (coming in a future phase).", item.Label)
 		return a, nil
 	}
@@ -116,6 +129,8 @@ func (a App) View() string {
 		content = a.configEditor.View()
 	case screenMenu:
 		content = a.menu.View()
+	case screenPrecheck:
+		content = a.precheck.View()
 	}
 
 	if a.errMsg != "" {

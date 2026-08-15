@@ -144,31 +144,33 @@ func (r *UpdateResult) updateOllama() {
 		}
 	}
 
-	// Run upstream installer (best-effort — always re-bootstrap regardless of result)
+	// Capture version before so we can detect whether the binary changed.
+	verBefore := strings.TrimSpace(run("ollama", "--version"))
+
+	// Run upstream installer. On headless servers the script always exits non-zero
+	// because it tries to launch Ollama.app via GUI (RBSRequestErrorDomain Code=5).
+	// The binary itself is installed correctly — ignore the exit code and check the
+	// version afterwards instead.
 	r.add(sec, ActionInfo, "Running Ollama installer…", "")
-	var installStderr strings.Builder
 	cmd := exec.Command("/bin/sh", "-c", "curl -fsSL https://ollama.com/install.sh | sh")
 	cmd.Stdout = io.Discard
-	cmd.Stderr = &installStderr
-	installOK := cmd.Run() == nil
-	if installOK {
-		r.add(sec, ActionSet, "Ollama installer complete", "")
-		// Re-remove login item (installer may re-add it)
-		_ = exec.Command("osascript", "-e",
-			`tell application "System Events" to delete login item "Ollama"`).Run()
-		_ = exec.Command("pkill", "-f", "Ollama.app").Run()
-		r.add(sec, ActionSet, "Login item removed (daemon manages startup)", "")
+	cmd.Stderr = io.Discard
+	_ = cmd.Run() // intentionally ignored — GUI launch always fails headless
+
+	verAfter := strings.TrimSpace(run("ollama", "--version"))
+	if verAfter != "" && verAfter != verBefore {
+		r.add(sec, ActionSet, "Ollama updated: "+verBefore+" → "+verAfter, "")
+	} else if verAfter != "" {
+		r.add(sec, ActionSkip, "Ollama already at latest ("+verAfter+")", "")
 	} else {
-		errSnip := strings.TrimSpace(installStderr.String())
-		if len(errSnip) > 300 {
-			errSnip = errSnip[len(errSnip)-300:]
-		}
-		detail := "To update manually: curl -fsSL https://ollama.com/install.sh | sh"
-		if errSnip != "" {
-			detail = "Installer error: " + errSnip + "\n" + detail
-		}
-		r.add(sec, ActionWarn, "Ollama installer failed — re-bootstrapping existing binary", detail)
+		r.add(sec, ActionWarn, "Could not determine Ollama version after install",
+			"Check: ollama --version")
 	}
+
+	// Clean up GUI artifacts the installer may have added.
+	_ = exec.Command("osascript", "-e",
+		`tell application "System Events" to delete login item "Ollama"`).Run()
+	_ = exec.Command("pkill", "-f", "Ollama.app").Run()
 
 	// Re-bootstrap regardless — daemon was stopped above and must come back up
 	if exec.Command("launchctl", "bootstrap", "system", plist).Run() == nil {

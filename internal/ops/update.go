@@ -134,28 +134,30 @@ func (r *UpdateResult) updateOllama() {
 		r.add(sec, ActionInfo, "com.ollama.server not running — continuing", "")
 	}
 
-	// Run upstream installer
+	// Run upstream installer (best-effort — always re-bootstrap regardless of result)
 	r.add(sec, ActionInfo, "Running Ollama installer…", "")
 	cmd := exec.Command("/bin/sh", "-c", "curl -fsSL https://ollama.com/install.sh | sh")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		r.add(sec, ActionFail, "Ollama installer failed: "+err.Error(), "")
-		return
+	installOK := cmd.Run() == nil
+	if installOK {
+		r.add(sec, ActionSet, "Ollama installer complete", "")
+		// Re-remove login item (installer may re-add it)
+		_ = exec.Command("osascript", "-e",
+			`tell application "System Events" to delete login item "Ollama"`).Run()
+		_ = exec.Command("pkill", "-f", "Ollama.app").Run()
+		r.add(sec, ActionSet, "Login item removed (daemon manages startup)", "")
+	} else {
+		r.add(sec, ActionWarn, "Ollama installer failed — re-bootstrapping existing binary",
+			"To update manually: curl -fsSL https://ollama.com/install.sh | sh")
 	}
-	r.add(sec, ActionSet, "Ollama installer complete", "")
 
-	// Re-remove login item (installer may re-add it)
-	_ = exec.Command("osascript", "-e",
-		`tell application "System Events" to delete login item "Ollama"`).Run()
-	_ = exec.Command("pkill", "-f", "Ollama.app").Run()
-	r.add(sec, ActionSet, "Login item removed (daemon manages startup)", "")
-
-	// Re-bootstrap
+	// Re-bootstrap regardless — daemon was stopped above and must come back up
 	if exec.Command("launchctl", "bootstrap", "system", plist).Run() == nil {
 		r.add(sec, ActionSet, "com.ollama.server re-bootstrapped", "")
 	} else {
-		r.add(sec, ActionWarn, "Could not re-bootstrap com.ollama.server", "")
+		r.add(sec, ActionWarn, "Could not re-bootstrap com.ollama.server",
+			"Check: sudo launchctl print system/com.ollama.server")
 		return
 	}
 

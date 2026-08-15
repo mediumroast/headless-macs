@@ -11,7 +11,6 @@ package ops
 import (
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -222,15 +221,14 @@ func (r *VerifyResult) sectionSystem(cfg *config.Config, sipEnabled bool) {
 		r.warn(sec, "Spotlight indexing may be active", "Fix: sudo mdutil -a -i off")
 	}
 
-	// SSH
-	ln, err := net.Listen("tcp", "127.0.0.1:22")
-	if err != nil {
-		// Port 22 is in use — SSH is listening
-		r.pass(sec, "SSH enabled (port 22 listening)", "")
+	// SSH — check via launchctl (macOS 26 uses socket activation; port binding is unreliable)
+	sshOut, _ := exec.Command("launchctl", "print", "system/com.openssh.sshd").Output()
+	if strings.Contains(string(sshOut), "state = running") ||
+		strings.Contains(string(sshOut), "state = waiting") {
+		r.pass(sec, "SSH enabled (com.openssh.sshd running)", "")
 	} else {
-		ln.Close()
 		r.warn(sec, "SSH not enabled",
-			"Fix (macOS 26+): sudo launchctl enable system/com.openssh.sshd && sudo launchctl kickstart -k system/com.openssh.sshd")
+			"Fix: sudo launchctl enable system/com.openssh.sshd && sudo launchctl kickstart -k system/com.openssh.sshd")
 	}
 
 	// sshd drop-in

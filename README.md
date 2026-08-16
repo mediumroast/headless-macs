@@ -126,27 +126,21 @@ headless-macs/
 │   └── log/                   # Structured log writer
 ├── config.json                # Config template (copied to ~/.headless_macs/ on first run)
 ├── modelfiles/
-│   ├── qwen3-coder-next-256k-agent.modelfile  # Agent variant: low temp, tool rules
-│   ├── qwen3-coder-next-256k.modelfile        # Chat variant: higher temp
+│   ├── qwen3-coder-next-256k-agent.modelfile  # Agent: low temp, tool rules
+│   ├── qwen3-coder-next-256k.modelfile        # Chat: higher temp
 │   └── qwen3-coder-next-128k.modelfile        # Reduced context for memory headroom
 ├── docs/
-│   ├── modelfile-guide.md  # Modelfile system, parameter rationale, ollama create workflow
-│   ├── tool-comparison.md  # Ollama vs Rapid-MLX vs mlx-lm vs Infinity vs Exo
-│   ├── ram-sizing.md       # Model size × quantisation × RAM + KV cache reference
-│   ├── storage-guide.md    # External volume: APFS, fstab, symlink map
-│   └── known-issues.md     # Workarounds for common problems
-│
-│   Shell scripts (v1 — deprecated, still functional):
-├── precheck.sh            # → Precheck menu item
-├── setup.sh               # → System Baseline menu item
-├── install-tools.sh       # → Install Tools menu item
-├── storage-volume.sh      # → Storage Setup menu item
-├── verify.sh              # → Verify menu item
-├── restore.sh             # → Restore menu item
-├── update-tools.sh        # → Update Tools menu item
-├── manage.sh              # Phase 2 orchestrator (legacy)
-├── pmset_to_ollama.sh     # [DEPRECATED]
-└── setup_colima.sh        # [DEPRECATED]
+│   ├── modelfile-guide.md     # Modelfile system, ollama create workflow
+│   ├── tool-comparison.md     # Ollama vs Rapid-MLX vs mlx-lm vs Infinity vs Exo
+│   ├── ram-sizing.md          # Model size × quantisation × RAM + KV cache reference
+│   ├── storage-guide.md       # External volume: APFS, fstab, symlink map
+│   ├── known-issues.md        # Workarounds for common problems
+│   └── planning/              # Phase design documents (historical reference)
+└── deprecated/                # v1 shell pipeline — functional but unmaintained
+    ├── precheck.sh · setup.sh · install-tools.sh · verify.sh
+    ├── restore.sh · update-tools.sh · storage-volume.sh · manage.sh
+    ├── scripts/               # Phase 2 per-component scripts
+    └── lib/                   # Shared helpers for scripts/
 ```
 
 ---

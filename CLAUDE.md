@@ -34,34 +34,21 @@ The TUI (`internal/tui/`) presents these as screens in a Bubble Tea app. All ops
 
 ### Shell scripts (deprecated in v2 — do not modify)
 
-The v1 bash pipeline scripts still exist and work, but are superseded by the Go binary and carry a deprecation notice in their headers. Do not add features to or modify them:
+The v1 bash pipeline has been moved to `deprecated/`. The scripts still work but are superseded by the Go binary and carry a deprecation notice in their headers. Do not add features to or modify them:
 
 ```
-precheck.sh        → RunPrecheck()
-setup.sh           → RunBaseline()
-install-tools.sh   → RunTools()
-storage-volume.sh  → RunStorage()
-verify.sh          → RunVerify()
-restore.sh         → RunRestore()
-update-tools.sh    → RunUpdateTools()
-manage.sh          Phase 2 orchestrator
-```
-
-### Legacy / orchestration (do not modify)
-
-```
-scripts/ollama_setup.sh
-scripts/power_management.sh
-scripts/homebrew_setup.sh
-scripts/colima_setup.sh
-lib/common.sh
-```
-
-### Deprecated (do not reference, do not modify)
-
-```
-pmset_to_ollama.sh     Superseded by setup.sh + install-tools.sh.
-setup_colima.sh        Superseded by manage.sh / scripts/colima_setup.sh.
+deprecated/precheck.sh        → RunPrecheck()
+deprecated/setup.sh           → RunBaseline()
+deprecated/install-tools.sh   → RunTools()
+deprecated/storage-volume.sh  → RunStorage()
+deprecated/verify.sh          → RunVerify()
+deprecated/restore.sh         → RunRestore()
+deprecated/update-tools.sh    → RunUpdateTools()
+deprecated/manage.sh          Phase 2 orchestrator
+deprecated/scripts/           Phase 2 per-component scripts
+deprecated/lib/               Shared helpers for scripts/
+deprecated/pmset_to_ollama.sh [DEPRECATED]
+deprecated/setup_colima.sh    [DEPRECATED]
 ```
 
 ---

@@ -76,7 +76,7 @@ func (m MenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m MenuModel) View() string {
 	var b strings.Builder
 
-	b.WriteString(styleTitle.Render(fmt.Sprintf(" headless-macs v%s ", appVersion)))
+	b.WriteString(styleTitle.Render(fmt.Sprintf(" headless-macs v%s ", Version)))
 	b.WriteByte('\n')
 	b.WriteString(styleDivider.Render(strings.Repeat("─", max(m.width, 40))))
 	b.WriteByte('\n')

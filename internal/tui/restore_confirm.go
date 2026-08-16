@@ -46,7 +46,7 @@ func (m RestoreConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m RestoreConfirmModel) View() string {
 	var b strings.Builder
 
-	b.WriteString(styleTitle.Render(fmt.Sprintf(" headless-macs v%s — Restore ", appVersion)))
+	b.WriteString(styleTitle.Render(fmt.Sprintf(" headless-macs v%s — Restore ", Version)))
 	b.WriteByte('\n')
 	b.WriteString(styleDivider.Render(strings.Repeat("─", max(m.width, 40))))
 	b.WriteByte('\n')

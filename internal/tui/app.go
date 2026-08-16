@@ -9,7 +9,8 @@ import (
 	"github.com/mediumroast/headless-macs/internal/config"
 )
 
-const appVersion = "2.0.0-dev"
+// Version is set by main.go via NewApp — no hardcoded string here.
+var Version = "dev"
 
 type screen int
 

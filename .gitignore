@@ -1,5 +1,5 @@
-# Compiled binary
-headless-macs
+# Compiled binary (root only — does not match cmd/headless-macs/)
+/headless-macs
 
 # Go build artifacts
 *.test

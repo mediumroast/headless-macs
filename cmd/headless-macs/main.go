@@ -97,6 +97,7 @@ func runTUI() {
 		os.Exit(1)
 	}
 
+	tui.Version = version
 	app := tui.NewApp(cfg, firstRun)
 	p := tea.NewProgram(app, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {

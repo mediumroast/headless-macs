@@ -206,7 +206,7 @@ func (m ConfigEditorModel) View() string {
 	var b strings.Builder
 
 	// Title
-	b.WriteString(styleTitle.Render(fmt.Sprintf(" headless-macs v%s — Configuration Editor ", appVersion)))
+	b.WriteString(styleTitle.Render(fmt.Sprintf(" headless-macs v%s — Configuration Editor ", Version)))
 	b.WriteByte('\n')
 	b.WriteString(styleDivider.Render(strings.Repeat("─", w)))
 	b.WriteByte('\n')

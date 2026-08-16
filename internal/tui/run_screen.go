@@ -191,7 +191,7 @@ func (m RunScreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m RunScreenModel) View() string {
 	var b strings.Builder
 
-	b.WriteString(styleTitle.Render(fmt.Sprintf(" headless-macs v%s — %s ", appVersion, m.title)))
+	b.WriteString(styleTitle.Render(fmt.Sprintf(" headless-macs v%s — %s ", Version, m.title)))
 	b.WriteByte('\n')
 	b.WriteString(styleDivider.Render(strings.Repeat("─", max(m.width, 40))))
 	b.WriteByte('\n')

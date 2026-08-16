@@ -8,46 +8,47 @@ This file is read by Claude Code at the start of every session. It describes wha
 
 `headless-macs` configures Apple Silicon Macs as production-grade, unattended LLM inference nodes. The design goals are:
 
-- **Idempotent** — every script can be run multiple times; it skips settings that are already correct.
-- **Config-driven** — one `config.json` controls all scripts via `jq`. No hardcoded values in scripts.
-- **Auditable** — `precheck.sh` (read-only) runs before anything; `verify.sh` (read-only) runs after. Changes are bracketed by audit tools.
-- **Reversible** — `restore.sh` undoes everything `setup.sh` and `install-tools.sh` did.
-- **Minimal surface** — the toolset does not install anything beyond what is needed for LLM inference. No homebrew package management, no dotfiles, no general-purpose admin tooling.
+- **Idempotent** — every operation can be run multiple times; it skips settings that are already correct.
+- **Config-driven** — one `config.json` (stored at `~/.headless_macs/config.json`) controls all operations. No hardcoded values.
+- **Auditable** — Precheck (read-only) runs before anything; Verify (read-only) runs after. Changes are bracketed by audit tools.
+- **Reversible** — Restore undoes everything System Baseline and Install Tools did.
+- **Minimal surface** — the toolset does not install anything beyond what is needed for LLM inference.
 
 ---
 
-## Script architecture
+## Architecture (v2 — Go binary)
 
-### Main pipeline (the scripts users actually run)
-
-```
-precheck.sh       Read-only audit. No sudo. Run first. Writes /tmp/mac-llm-precheck.json.
-setup.sh          System baseline: pmset, sysctl, service suppression, SSH, LaunchDaemons.
-install-tools.sh  Serving stack: Ollama, Rapid-MLX, mlx-lm, Infinity, Exo.
-verify.sh         Health check. Read-only. Run any time.
-restore.sh        Undo everything setup.sh and install-tools.sh did.
-update-tools.sh   In-place binary upgrade for serving tools (Ollama etc).
-storage-volume.sh External volume setup (only if storage.use_external_volume: true).
-```
-
-Canonical run order: `precheck.sh` → `[storage-volume.sh]` → `setup.sh` → `install-tools.sh` → `verify.sh`
-
-### Legacy / orchestration (do not grow these)
+The primary interface is the `headless-macs` Go binary (`cmd/headless-macs/main.go`). All operations that were formerly shell scripts are implemented as Go packages under `internal/ops/`:
 
 ```
-manage.sh              Interactive menu + CLI dispatcher. Phase 2 artifact. Only add update-path wiring.
-scripts/ollama_setup.sh    Old per-component script. Do not modify.
-scripts/power_management.sh
-scripts/homebrew_setup.sh
-scripts/colima_setup.sh
-lib/common.sh          Shared helpers used only by the scripts/ family.
+internal/ops/precheck.go    RunPrecheck()       — read-only audit
+internal/ops/baseline.go    RunBaseline()       — system baseline (pmset, sysctl, services, SSH)
+internal/ops/storage.go     RunStorage()        — external volume setup
+internal/ops/tools.go       RunTools()          — serving stack installation
+internal/ops/verify.go      RunVerify()         — health check
+internal/ops/restore.go     RunRestore()        — undo all changes
+internal/ops/update.go      RunUpdateTools()    — in-place binary upgrade
 ```
 
-### Deprecated (do not reference, do not modify)
+The TUI (`internal/tui/`) presents these as screens in a Bubble Tea app. All ops functions are Go-native — they do not shell out to the bash scripts.
+
+### Shell scripts (deprecated in v2 — do not modify)
+
+The v1 bash pipeline has been moved to `deprecated/`. The scripts still work but are superseded by the Go binary and carry a deprecation notice in their headers. Do not add features to or modify them:
 
 ```
-pmset_to_ollama.sh     Superseded by setup.sh + install-tools.sh.
-setup_colima.sh        Superseded by manage.sh / scripts/colima_setup.sh.
+deprecated/precheck.sh        → RunPrecheck()
+deprecated/setup.sh           → RunBaseline()
+deprecated/install-tools.sh   → RunTools()
+deprecated/storage-volume.sh  → RunStorage()
+deprecated/verify.sh          → RunVerify()
+deprecated/restore.sh         → RunRestore()
+deprecated/update-tools.sh    → RunUpdateTools()
+deprecated/manage.sh          Phase 2 orchestrator
+deprecated/scripts/           Phase 2 per-component scripts
+deprecated/lib/               Shared helpers for scripts/
+deprecated/pmset_to_ollama.sh [DEPRECATED]
+deprecated/setup_colima.sh    [DEPRECATED]
 ```
 
 ---
@@ -312,7 +313,7 @@ For any non-trivial change (touching more than 2 files, or requiring architectur
 3. Get user approval on the plan before implementing.
 4. Commit the plan document alongside the implementation PR.
 
-Phase numbering follows the project history: Phase 1 (initial), 2 (production rewrite), 3 (LiteLLM, planned), 4 (Modelfiles), 5 (security hardening). Next is Phase 6.
+Phase numbering follows the project history: Phase 1 (initial), 2 (production rewrite), 3 (LiteLLM, planned), 4 (Modelfiles), 5 (security hardening), 6 (Go rewrite). Next is Phase 7.
 
 ---
 
@@ -383,3 +384,4 @@ gh release list
 | v1.0.0 | 2026-06-07 | Phase 2: Production rewrite — precheck/setup/install-tools/verify/restore (PR #1) |
 | v1.1.0 | 2026-06-10 | Phase 4: Modelfile system, KV cache model, Zoo Code (PR #2) |
 | v1.2.0 | 2026-06-11 | Phase 5: Security hardening, operational improvements, Ollama lifecycle (PR #3) |
+| v2.0.0 | 2026-08-15 | Phase 6: Go rewrite — TUI binary replaces shell pipeline (PR #4) |

@@ -1,4 +1,7 @@
 #!/bin/bash
+# DEPRECATED in v2.0.0 — use the headless-macs Go binary instead:
+#   sudo headless-macs          (interactive TUI — all operations from one menu)
+# This script remains functional but is no longer actively maintained.
 
 # manage.sh — Component Orchestrator for Mac LLM Optimizer
 # Installs, enables, disables, removes, and reports status of all components.

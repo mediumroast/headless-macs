@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# DEPRECATED in v2.0.0 — use the headless-macs Go binary instead:
+#   sudo headless-macs          (interactive TUI — runs precheck from the menu)
+# This script remains functional but is no longer actively maintained.
+#
 # precheck.sh — Read-only system audit for Mac LLM Optimizer
 #
 # Run this FIRST before any other script. Requires no sudo. Makes zero changes.

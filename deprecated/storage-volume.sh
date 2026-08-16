@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# DEPRECATED in v2.0.0 — use the headless-macs Go binary instead:
+#   sudo headless-macs          (interactive TUI — "Storage Setup" from the menu)
+# This script remains functional but is no longer actively maintained.
+#
 # storage-volume.sh — External Volume Setup for Mac LLM Optimizer
 #
 # Configures an external drive as the model storage location for all serving

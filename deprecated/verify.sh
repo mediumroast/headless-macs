@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# DEPRECATED in v2.0.0 — use the headless-macs Go binary instead:
+#   sudo headless-macs          (interactive TUI — "Verify" from the menu)
+# This script remains functional but is no longer actively maintained.
+#
 # verify.sh — Health Check Report for Mac LLM Optimizer
 #
 # Runs pass/fail checks across system baseline and all enabled tools.

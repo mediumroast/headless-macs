@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# DEPRECATED in v2.0.0 — use the headless-macs Go binary instead:
+#   sudo headless-macs          (interactive TUI — "Update Tools" from the menu)
+# This script remains functional but is no longer actively maintained.
+#
 # update-tools.sh — In-place upgrade for LLM serving tools
 #
 # Updates a tool's binary without losing daemon configuration or models.

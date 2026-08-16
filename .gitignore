@@ -1,0 +1,16 @@
+# Compiled binary
+headless-macs
+
+# Go build artifacts
+*.test
+*.out
+
+# macOS
+.DS_Store
+.AppleDouble
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo

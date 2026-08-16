@@ -14,7 +14,7 @@ import (
 	"github.com/mediumroast/headless-macs/internal/tui"
 )
 
-const version = "2.0.0"
+const version = "2.1.1"
 
 const usage = `headless-macs — Apple Silicon LLM inference node manager
 

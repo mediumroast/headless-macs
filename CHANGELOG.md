@@ -13,6 +13,19 @@ _Changes on the current branch not yet merged to main._
 
 ---
 
+## [2.1.1] — 2026-08-15
+
+### Fixed
+
+- **TUI version string** — all screens showed `v2.0.0-dev`; version is now set from the single constant in `main.go` via `tui.Version`
+- **`.gitignore` pattern** — `headless-macs` was matching `cmd/headless-macs/` directory and blocking staging of source files; changed to `/headless-macs` (rooted pattern)
+
+### PR
+
+_#5 Fix: version string and .gitignore pattern (link after merge)_
+
+---
+
 ## [2.1.0] — 2026-08-15
 
 Post-launch fixes and CLI headless support found during first real-world run on doppio-1 (M4 Max, macOS 26).
@@ -203,7 +216,8 @@ Initial release: single-script pmset + Ollama LaunchDaemon setup.
 
 ---
 
-[Unreleased]: https://github.com/miha42-github/headless-macs/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/miha42-github/headless-macs/compare/v2.1.1...HEAD
+[2.1.1]: https://github.com/miha42-github/headless-macs/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/miha42-github/headless-macs/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/miha42-github/headless-macs/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/miha42-github/headless-macs/compare/v1.1.0...v1.2.0

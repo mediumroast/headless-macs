@@ -205,6 +205,34 @@ inference node`.
 
 ---
 
+### 9. Warn when high-memory tools are enabled together
+
+**Problem:** Rapid-MLX loads its full model into unified memory on daemon start
+and holds it until the daemon is stopped — regardless of whether any requests
+are being served. On doppio-1 with qwen3-aftertaste-fused, this was ~20-25 GB
+continuously consumed. When Rapid-MLX and Ollama are both enabled,
+`MAX_LOADED_MODELS` for Ollama should be recalculated to account for the
+Rapid-MLX model footprint, otherwise the node can be overcommitted.
+
+Note: `rapid_mlx.enabled` is already `false` in the default `config.json`
+template — this is correct. The issue is operator documentation: users enabling
+Rapid-MLX should understand it permanently pins its model in memory and plan
+their Ollama `MAX_LOADED_MODELS` accordingly.
+
+**Fix:**
+- Add a `[WARN]` to `RunPrecheck` when both `rapid_mlx.enabled` and
+  `ollama.enabled` are true, noting that Rapid-MLX holds its model in memory
+  continuously and the operator should account for this in Ollama tuning.
+- Add a note to `docs/tool-comparison.md` and the README under Rapid-MLX's
+  entry explaining the always-resident memory model.
+- Consider adjusting the Ollama RAM-tuning logic in `install-tools` to subtract
+  an estimated Rapid-MLX model footprint when both tools are enabled.
+
+**Scope:** `internal/ops/precheck.go` (warn), `docs/tool-comparison.md` (note),
+optionally `internal/ops/tools.go` (tuning adjustment).
+
+---
+
 ## Notes (Service Suppression)
 
 - Items 3–7 belong in the same phase — all are additions to the System Baseline

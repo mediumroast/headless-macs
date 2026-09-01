@@ -73,6 +73,90 @@ rotation). At 100 MB per file with 5 copies, maximum stderr storage is ~500 MB.
 
 ---
 
+## Log Management
+
+### 1. Ollama — log verbosity and rotation
+
+*(Verbosity fix applied manually on doppio-1: `OLLAMA_LOG_LEVEL=warn` and
+`OLLAMA_MODELS` set to resolved path. Needs to be wired into the ops layer.)*
+
+See Items 1 and 2 below for the implementation plan.
+
+---
+
+### 10. Serving tool log rotation and verbosity — Rapid-MLX, mlx-lm, Infinity, Exo
+
+**Problem:** Only Ollama has a log verbosity control (`OLLAMA_LOG_LEVEL`).
+The remaining serving tools have no verbosity control and no log rotation
+configured — logs can grow unbounded. Exo additionally logs to `/tmp/` instead
+of a persistent `/var/log/exo/` directory, meaning logs are lost on reboot and
+are mixed into the system temp space.
+
+**Findings per tool:**
+
+| Tool | Log location | Verbosity control | Rotation |
+|---|---|---|---|
+| Rapid-MLX | `/var/log/rapid-mlx/` | None | None |
+| mlx-lm | `/var/log/mlx-lm/` | None | None |
+| Infinity | `/var/log/infinity/` | None | None |
+| Exo | `/tmp/` (**wrong**) | None | None |
+
+**Fix — Part A: Log verbosity**
+
+Add `--log-level WARNING` to `ProgramArguments` for Python-based tools where
+supported:
+
+- `mlx-lm`: add `--log-level WARNING` to the `mlx_lm.server` invocation in
+  `mlxLMPlist()` in `internal/ops/tools.go`
+- `Infinity`: add `--log-level WARNING` to the `infinity_emb` invocation in
+  `infinityPlist()`
+- `Rapid-MLX`: check if `rapid-mlx serve` accepts `--log-level`; if not, set
+  `PYTHONWARNINGS=ignore` and `LOGLEVEL=WARNING` in `EnvironmentVariables` as
+  a fallback
+- `Exo`: check if `exo` CLI accepts a log level flag; add if available
+
+**Fix — Part B: Exo log directory (bug)**
+
+Move Exo log paths from `/tmp/` to `/var/log/exo/`. Create the directory in
+`installExo()` alongside the other tools:
+
+```go
+_ = os.MkdirAll("/var/log/exo", 0755)
+```
+
+Update `exoPlist()`:
+```
+StandardOutPath  →  /var/log/exo/stdout.log
+StandardErrorPath →  /var/log/exo/stderr.log
+```
+
+**Fix — Part C: newsyslog rotation for all tools**
+
+Create `/etc/newsyslog.d/llm-servers.conf` during Install Tools covering all
+enabled serving tools:
+
+```
+/var/log/ollama/stderr.log      root:wheel  644  5  102400  *  JG
+/var/log/ollama/stdout.log      root:wheel  644  3  10240   *  JG
+/var/log/rapid-mlx/stderr.log   root:wheel  644  5  102400  *  JG
+/var/log/rapid-mlx/stdout.log   root:wheel  644  3  10240   *  JG
+/var/log/mlx-lm/stderr.log      root:wheel  644  5  102400  *  JG
+/var/log/mlx-lm/stdout.log      root:wheel  644  3  10240   *  JG
+/var/log/infinity/stderr.log    root:wheel  644  5  102400  *  JG
+/var/log/infinity/stdout.log    root:wheel  644  3  10240   *  JG
+/var/log/exo/stderr.log         root:wheel  644  5  102400  *  JG
+/var/log/exo/stdout.log         root:wheel  644  3  10240   *  JG
+```
+
+Rotation at 100 MB, 5 copies = max ~500 MB stderr per tool. The newsyslog
+conf file should be removed by the restore ops.
+
+**Scope:** `internal/ops/tools.go` — all four `*Plist()` functions + log
+directory creation for Exo. `internal/ops/restore.go` — remove
+`/etc/newsyslog.d/llm-servers.conf` on restore.
+
+---
+
 ## Notes (Ollama)
 
 - Items 1 and 2 are related and should be implemented together in the same

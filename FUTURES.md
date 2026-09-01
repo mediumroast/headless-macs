@@ -60,12 +60,13 @@ Create `/etc/newsyslog.d/ollama.conf` during `install-tools` to cap log size
 and keep a bounded number of rotated copies:
 
 ```
-/var/log/ollama/stderr.log  _llmserver:wheel  644  5  102400  *  J
-/var/log/ollama/stdout.log  _llmserver:wheel  644  3  10240   *  J
+/var/log/ollama/stderr.log  _llmserver:wheel  644  5  102400  *  JC
+/var/log/ollama/stdout.log  _llmserver:wheel  644  3  10240   *  JC
 ```
 
 Columns: path · owner:group · mode · copies to keep · rotate at KB ·
-schedule (`*` = daily) · flags (`J`=bzip2 compress).
+schedule (`*` = daily) · flags (`J`=bzip2 compress, `C`=create new file with
+specified owner/mode).
 
 Owner must be `_llmserver:wheel` — the daemon runs as `_llmserver` and the
 log directory must be owned by that account (`chown _llmserver:wheel
@@ -74,6 +75,12 @@ is managed by launchd via `StandardOutPath`/`StandardErrorPath`, not by the
 process itself reopening its log fd. launchd writes into the new file
 automatically after newsyslog renames the old one — no signal needed. Using
 `G` would send SIGHUP to the wrong pid or have no effect.
+
+The `C` flag is required to preserve ownership after every rotation. Without
+it, newsyslog creates the replacement file as `root:wheel`, not
+`_llmserver:wheel`. `C` instructs newsyslog to create the new file using the
+owner:group and mode from the config row, keeping ownership consistent across
+all rotation cycles.
 
 At 100 MB per file with 5 copies, maximum stderr storage is ~500 MB.
 
@@ -145,16 +152,16 @@ Create `/etc/newsyslog.d/llm-servers.conf` during Install Tools covering all
 enabled serving tools:
 
 ```
-/var/log/ollama/stderr.log      _llmserver:wheel  644  5  102400  *  J
-/var/log/ollama/stdout.log      _llmserver:wheel  644  3  10240   *  J
-/var/log/rapid-mlx/stderr.log   _llmserver:wheel  644  5  102400  *  J
-/var/log/rapid-mlx/stdout.log   _llmserver:wheel  644  3  10240   *  J
-/var/log/mlx-lm/stderr.log      _llmserver:wheel  644  5  102400  *  J
-/var/log/mlx-lm/stdout.log      _llmserver:wheel  644  3  10240   *  J
-/var/log/infinity/stderr.log    _llmserver:wheel  644  5  102400  *  J
-/var/log/infinity/stdout.log    _llmserver:wheel  644  3  10240   *  J
-/var/log/exo/stderr.log         _llmserver:wheel  644  5  102400  *  J
-/var/log/exo/stdout.log         _llmserver:wheel  644  3  10240   *  J
+/var/log/ollama/stderr.log      _llmserver:wheel  644  5  102400  *  JC
+/var/log/ollama/stdout.log      _llmserver:wheel  644  3  10240   *  JC
+/var/log/rapid-mlx/stderr.log   _llmserver:wheel  644  5  102400  *  JC
+/var/log/rapid-mlx/stdout.log   _llmserver:wheel  644  3  10240   *  JC
+/var/log/mlx-lm/stderr.log      _llmserver:wheel  644  5  102400  *  JC
+/var/log/mlx-lm/stdout.log      _llmserver:wheel  644  3  10240   *  JC
+/var/log/infinity/stderr.log    _llmserver:wheel  644  5  102400  *  JC
+/var/log/infinity/stdout.log    _llmserver:wheel  644  3  10240   *  JC
+/var/log/exo/stderr.log         _llmserver:wheel  644  5  102400  *  JC
+/var/log/exo/stdout.log         _llmserver:wheel  644  3  10240   *  JC
 ```
 
 Owner must be `_llmserver:wheel` throughout — all serving daemons run as

@@ -43,14 +43,41 @@ is currently applied.
 **Two-part fix:**
 
 **Part A — Reduce verbosity at the source.**
-Add `OLLAMA_LOG_LEVEL=warn` to the Ollama LaunchDaemon plist's
-`EnvironmentVariables`. This cuts log volume to actual warnings and errors only.
-Wire it into the ops layer so it is set by default and overridable via config:
+
+Two independent log streams feed into `stderr.log`:
+
+1. **Ollama's own Go logger** — controlled by `OLLAMA_LOG_LEVEL`. Set to `warn`
+   to suppress GIN request lines and model-loading info.
+2. **llama-server's C++ logger** — controlled by `LLAMA_ARG_LOG_VERBOSITY`.
+   Ollama spawns llama-server with `--log-verbosity 4` (trace level) by default,
+   which produces all slot operation, KV cache, and scheduling detail even when
+   `OLLAMA_LOG_LEVEL=warn`. This env var passes through directly to llama-server's
+   `--log-verbosity` flag. Set to `1` for errors and warnings only.
+
+Confirmed via `llama-server --help`:
+```
+-lv, --log-verbosity N   (env: LLAMA_ARG_LOG_VERBOSITY)
+```
+And via `ollama serve --help`, which lists `LLAMA_ARG_LOG_VERBOSITY` as a
+recognized passthrough variable.
+
+llama-server verbosity scale: `0` = error, `1` = warn, `2` = info, `3` = debug,
+`4` = trace (default Ollama passes).
+
+Add both env vars to the Ollama LaunchDaemon plist's `EnvironmentVariables`:
+
+```xml
+<key>OLLAMA_LOG_LEVEL</key><string>warn</string>
+<key>LLAMA_ARG_LOG_VERBOSITY</key><string>1</string>
+```
+
+Wire into the ops layer so both are set by default and overridable via config:
 
 ```json
 "tools": {
   "ollama": {
-    "log_level": "warn"
+    "log_level": "warn",
+    "llama_log_verbosity": 1
   }
 }
 ```

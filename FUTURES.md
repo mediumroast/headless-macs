@@ -47,40 +47,53 @@ is currently applied.
 Two independent log streams feed into `stderr.log`:
 
 1. **Ollama's own Go logger** — controlled by `OLLAMA_LOG_LEVEL`. Set to `warn`
-   to suppress GIN request lines and model-loading info.
-2. **llama-server's C++ logger** — controlled by `LLAMA_ARG_LOG_VERBOSITY`.
-   Ollama spawns llama-server with `--log-verbosity 4` (trace level) by default,
-   which produces all slot operation, KV cache, and scheduling detail even when
-   `OLLAMA_LOG_LEVEL=warn`. This env var passes through directly to llama-server's
-   `--log-verbosity` flag. Set to `1` for errors and warnings only.
+   to suppress GIN request lines and model-loading info. Note: `OLLAMA_LOG_LEVEL`
+   does not appear in `ollama serve --help` (0.33.2); the recognized variable is
+   `OLLAMA_DEBUG`. Behavior should be verified on the installed version.
 
-Confirmed via `llama-server --help`:
-```
--lv, --log-verbosity N   (env: LLAMA_ARG_LOG_VERBOSITY)
-```
-And via `ollama serve --help`, which lists `LLAMA_ARG_LOG_VERBOSITY` as a
-recognized passthrough variable.
+2. **llama-server's C++ logger** — produces all slot operation, KV cache, and
+   scheduling detail (lines prefixed `slot`, `srv`, `cmn`, `sched`). This stream
+   is **not suppressible via environment variable** in Ollama 0.33.2.
 
-llama-server verbosity scale: `0` = error, `1` = warn, `2` = info, `3` = debug,
-`4` = trace (default Ollama passes).
+   `llama-server --help` documents `LLAMA_ARG_LOG_VERBOSITY` as the env var for
+   `--log-verbosity`, and `ollama serve --help` lists it as a passthrough.
+   However, Ollama 0.33.2 hardcodes `--log-verbosity 4` in the llama-server
+   command it constructs, and the CLI arg explicitly overrides the env var.
+   Confirmed by the warning emitted at runtime:
 
-Add both env vars to the Ollama LaunchDaemon plist's `EnvironmentVariables`:
+   ```
+   warn: LLAMA_ARG_LOG_VERBOSITY environment variable is set,
+         but will be overwritten by command line argument --log-verbosity
+   cmn  common_param: verbosity = 4
+   ```
+
+   This occurs even when `OLLAMA_DEBUG` is not set (log shows `OLLAMA_DEBUG:INFO`
+   with debug disabled). Verbosity 4 is hardcoded regardless of debug mode in
+   this version.
+
+   **Current mitigation:** logrotate (100 MB / 5 copies) bounds total stderr
+   storage to ~500 MB. The slot/srv/cmn output is useful diagnostically.
+
+   **Upstream fix needed:** Ollama should expose a `OLLAMA_RUNNER_LOG_VERBOSITY`
+   or similar variable that is not overridden by the hardcoded CLI arg. File an
+   issue against Ollama if this remains a problem on newer versions.
+
+Add `OLLAMA_LOG_LEVEL=warn` to the Ollama plist and wire it into the ops layer:
 
 ```xml
 <key>OLLAMA_LOG_LEVEL</key><string>warn</string>
-<key>LLAMA_ARG_LOG_VERBOSITY</key><string>1</string>
 ```
-
-Wire into the ops layer so both are set by default and overridable via config:
 
 ```json
 "tools": {
   "ollama": {
-    "log_level": "warn",
-    "llama_log_verbosity": 1
+    "log_level": "warn"
   }
 }
 ```
+
+Do **not** add `LLAMA_ARG_LOG_VERBOSITY` to the plist — it is silently ignored
+and generates a startup warning in the log.
 
 **Part B — Add logrotate rotation.**
 

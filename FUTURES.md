@@ -46,39 +46,43 @@ is currently applied.
 
 Two independent log streams feed into `stderr.log`:
 
-1. **Ollama's own Go logger** — controlled by `OLLAMA_LOG_LEVEL`. Set to `warn`
-   to suppress GIN request lines and model-loading info. Note: `OLLAMA_LOG_LEVEL`
-   does not appear in `ollama serve --help` (0.33.2); the recognized variable is
-   `OLLAMA_DEBUG`. Behavior should be verified on the installed version.
+1. **Ollama's own Go logger** — controlled by `OLLAMA_LOG_LEVEL`. Setting this
+   to `warn` suppresses Ollama's own request lines and model-loading info.
 
-2. **llama-server's C++ logger** — produces all slot operation, KV cache, and
-   scheduling detail (lines prefixed `slot`, `srv`, `cmn`, `sched`). This stream
-   is **not suppressible via environment variable** in Ollama 0.33.2.
+2. **llama-server's C++ logger** — produces all `slot`, `srv`, `cmn`, `sched`
+   lines. **This cannot be suppressed by any env var in Ollama ≤ 0.33.2.**
 
-   `llama-server --help` documents `LLAMA_ARG_LOG_VERBOSITY` as the env var for
-   `--log-verbosity`, and `ollama serve --help` lists it as a passthrough.
-   However, Ollama 0.33.2 hardcodes `--log-verbosity 4` in the llama-server
-   command it constructs, and the CLI arg explicitly overrides the env var.
-   Confirmed by the warning emitted at runtime:
+   Ollama hardcodes `--log-verbosity 4` in the llama-server command. The env var
+   `LLAMA_ARG_LOG_VERBOSITY` is explicitly overridden by that CLI arg (confirmed
+   by runtime warning: `LLAMA_ARG_LOG_VERBOSITY … will be overwritten by command
+   line argument --log-verbosity`).
 
-   ```
-   warn: LLAMA_ARG_LOG_VERBOSITY environment variable is set,
-         but will be overwritten by command line argument --log-verbosity
-   cmn  common_param: verbosity = 4
-   ```
+   Lowering verbosity is also architecturally impossible: in the pinned
+   llama.cpp version (`b10488`) the verbosity scale is `1=ERROR 2=WARN 3=INFO
+   4=TRACE`, and the per-request noise is **split across INFO and TRACE**:
+   - Timing/slot-selection lines → `SLT_INF` (level 3)
+   - Sampler/cache/idle lines → `SLT_TRC` (level 4)
 
-   This occurs even when `OLLAMA_DEBUG` is not set (log shows `OLLAMA_DEBUG:INFO`
-   with debug disabled). Verbosity 4 is hardcoded regardless of debug mode in
-   this version.
+   Dropping to level 3 leaves all timing and slot-selection output. Dropping to
+   level 2 loses the memory/offload startup lines Ollama's scheduler parses for
+   accounting — this breaks scheduler correctness. Tried and rejected in
+   ollama/ollama#16899.
 
-   **Current mitigation:** logrotate (100 MB / 5 copies) bounds total stderr
-   storage to ~500 MB. The slot/srv/cmn output is useful diagnostically.
+   **Upstream fix (not yet merged):** Two open PRs implement a `runnerLogFilter`
+   writer in Ollama's Go layer that filters known-routine lines before writing to
+   stderr, leaving `--log-verbosity 4` and all memory parsing intact:
+   - [ollama/ollama#17913](https://github.com/ollama/ollama/pull/17913) — allowlist-based filter
+   - [ollama/ollama#16941](https://github.com/ollama/ollama/pull/16941) — similar approach
 
-   **Upstream fix needed:** Ollama should expose a `OLLAMA_RUNNER_LOG_VERBOSITY`
-   or similar variable that is not overridden by the hardcoded CLI arg. File an
-   issue against Ollama if this remains a problem on newer versions.
+   When one of these merges, `OLLAMA_DEBUG=1` will bypass the filter (raw output
+   for debugging); the default will be filtered. **Watch for this in the next
+   Ollama minor release after 0.33.2.**
 
-Add `OLLAMA_LOG_LEVEL=warn` to the Ollama plist and wire it into the ops layer:
+   **Current mitigation:** logrotate at 100 MB / 5 copies bounds total stderr
+   to ~500 MB. Growth rate observed on doppio-1: ~20 MB/day at the current
+   gpt-oss:120b workload.
+
+Add `OLLAMA_LOG_LEVEL=warn` to the Ollama plist and wire into the ops layer:
 
 ```xml
 <key>OLLAMA_LOG_LEVEL</key><string>warn</string>
@@ -92,8 +96,8 @@ Add `OLLAMA_LOG_LEVEL=warn` to the Ollama plist and wire it into the ops layer:
 }
 ```
 
-Do **not** add `LLAMA_ARG_LOG_VERBOSITY` to the plist — it is silently ignored
-and generates a startup warning in the log.
+Do **not** add `LLAMA_ARG_LOG_VERBOSITY` to the plist — Ollama overrides it and
+it generates a spurious startup warning.
 
 **Part B — Add logrotate rotation.**
 

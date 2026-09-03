@@ -55,37 +55,104 @@ Wire it into the ops layer so it is set by default and overridable via config:
 }
 ```
 
-**Part B — Add newsyslog rotation.**
-Create `/etc/newsyslog.d/ollama.conf` during `install-tools` to cap log size
-and keep a bounded number of rotated copies:
+**Part B — Add logrotate rotation.**
 
+**Do not use newsyslog** for this. newsyslog rotates by renaming the log file,
+which leaves the running process's file descriptor pointing to the old inode —
+new writes go to the rotated file, not the fresh empty one. Ollama (and all
+serving daemons) are managed by launchd via `StandardOutPath`/`StandardErrorPath`;
+launchd opens the fd once at daemon start and does not reopen it after a rename.
+The result is that no new log entries are written after rotation. Confirmed on
+doppio-1.
+
+Use **logrotate** (Homebrew) with `copytruncate` instead. `copytruncate`
+copies the log content then truncates the original file to zero bytes in place,
+leaving the fd valid — no restart needed.
+
+**Do not use `brew services start logrotate`** — Homebrew's config file
+(`/opt/homebrew/etc/logrotate.conf`) is owned by the brew user, not root.
+logrotate refuses to read config files not owned by root when running as root.
+Use a custom `com.llm-server.logrotate` LaunchDaemon instead (see below).
+
+**Setup steps (validated on doppio-1):**
+
+```bash
+# 1. Install logrotate
+brew install logrotate
+
+# 2. Create the config directory if it doesn't exist (not present by default on macOS)
+sudo mkdir -p /etc/logrotate.d
+
+# 3. Create a root-owned config (sudo tee ensures root ownership)
+sudo tee /etc/logrotate.d/llm-servers << 'EOF'
+/var/log/ollama/stderr.log /var/log/ollama/stdout.log {
+    size 100M
+    rotate 5
+    compress
+    copytruncate
+    missingok
+    notifempty
+    create 644 _llmserver wheel
+}
+EOF
+
+# 4. Test the config (dry-run, no rotation)
+sudo /opt/homebrew/opt/logrotate/sbin/logrotate -d /etc/logrotate.d/llm-servers
+
+# 5. Create the LaunchDaemon plist
+sudo tee /Library/LaunchDaemons/com.llm-server.logrotate.plist > /dev/null << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.llm-server.logrotate</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/opt/logrotate/sbin/logrotate</string>
+        <string>-s</string>
+        <string>/var/log/mac-llm-setup/logrotate.status</string>
+        <string>/etc/logrotate.d/llm-servers</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/var/log/mac-llm-setup/logrotate-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/mac-llm-setup/logrotate-stderr.log</string>
+</dict>
+</plist>
+EOF
+
+# 6. Set permissions and load
+sudo chown root:wheel /Library/LaunchDaemons/com.llm-server.logrotate.plist
+sudo chmod 644 /Library/LaunchDaemons/com.llm-server.logrotate.plist
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.llm-server.logrotate.plist
+
+# 7. Force an initial rotation to baseline logs before the next run
+sudo /opt/homebrew/opt/logrotate/sbin/logrotate -f \
+    -s /var/log/mac-llm-setup/logrotate.status \
+    /etc/logrotate.d/llm-servers
 ```
-/var/log/ollama/stderr.log  _llmserver:wheel  644  5  102400  *  JC
-/var/log/ollama/stdout.log  _llmserver:wheel  644  3  10240   *  JC
-```
 
-Columns: path · owner:group · mode · copies to keep · rotate at KB ·
-schedule (`*` = daily) · flags (`J`=bzip2 compress, `C`=create new file with
-specified owner/mode).
-
-Owner must be `_llmserver:wheel` — the daemon runs as `_llmserver` and the
-log directory must be owned by that account (`chown _llmserver:wheel
-/var/log/ollama`). Do **not** use the `G` flag (SIGHUP on rotation): Ollama
-is managed by launchd via `StandardOutPath`/`StandardErrorPath`, not by the
-process itself reopening its log fd. launchd writes into the new file
-automatically after newsyslog renames the old one — no signal needed. Using
-`G` would send SIGHUP to the wrong pid or have no effect.
-
-The `C` flag is required to preserve ownership after every rotation. Without
-it, newsyslog creates the replacement file as `root:wheel`, not
-`_llmserver:wheel`. `C` instructs newsyslog to create the new file using the
-owner:group and mode from the config row, keeping ownership consistent across
-all rotation cycles.
+The plist fires at 2 AM daily (`RunAtLoad = false` — does not rotate on boot).
+State is tracked at `/var/log/mac-llm-setup/logrotate.status`, which is in the
+existing pipeline log directory. stdout/stderr from the rotation job go to
+`/var/log/mac-llm-setup/logrotate-stdout.log` and `logrotate-stderr.log` for
+debugging.
 
 At 100 MB per file with 5 copies, maximum stderr storage is ~500 MB.
 
-**Scope:** `internal/ops/tools.go` (plist generation + newsyslog file write)
-+ `config.json` (optional `log_level` key under `tools.ollama`).
+**Scope:** `internal/ops/tools.go` (write `/etc/logrotate.d/llm-servers` and
+install plist during Install Tools) + `internal/ops/restore.go` (remove both
+on restore) + `config.json` (optional `log_level` key under `tools.ollama`).
 
 ---
 
@@ -146,38 +213,54 @@ StandardOutPath  →  /var/log/exo/stdout.log
 StandardErrorPath →  /var/log/exo/stderr.log
 ```
 
-**Fix — Part C: newsyslog rotation for all tools**
+**Fix — Part C: logrotate rotation for all tools**
 
-Create `/etc/newsyslog.d/llm-servers.conf` during Install Tools covering all
-enabled serving tools:
+Use **logrotate** (not newsyslog) with `copytruncate`. See Item 2 Part B for
+the full rationale — newsyslog's rename approach leaves all launchd-managed
+daemons writing to the old inode after rotation. Confirmed broken on doppio-1.
+
+Extend `/etc/logrotate.d/llm-servers` to cover all enabled serving tools:
 
 ```
-/var/log/ollama/stderr.log      _llmserver:wheel  644  5  102400  *  JC
-/var/log/ollama/stdout.log      _llmserver:wheel  644  3  10240   *  JC
-/var/log/rapid-mlx/stderr.log   _llmserver:wheel  644  5  102400  *  JC
-/var/log/rapid-mlx/stdout.log   _llmserver:wheel  644  3  10240   *  JC
-/var/log/mlx-lm/stderr.log      _llmserver:wheel  644  5  102400  *  JC
-/var/log/mlx-lm/stdout.log      _llmserver:wheel  644  3  10240   *  JC
-/var/log/infinity/stderr.log    _llmserver:wheel  644  5  102400  *  JC
-/var/log/infinity/stdout.log    _llmserver:wheel  644  3  10240   *  JC
-/var/log/exo/stderr.log         _llmserver:wheel  644  5  102400  *  JC
-/var/log/exo/stdout.log         _llmserver:wheel  644  3  10240   *  JC
+/var/log/ollama/stderr.log
+/var/log/ollama/stdout.log
+/var/log/rapid-mlx/stderr.log
+/var/log/rapid-mlx/stdout.log
+/var/log/mlx-lm/stderr.log
+/var/log/mlx-lm/stdout.log
+/var/log/infinity/stderr.log
+/var/log/infinity/stdout.log
+/var/log/exo/stderr.log
+/var/log/exo/stdout.log
+{
+    size 100M
+    rotate 5
+    compress
+    copytruncate
+    missingok
+    notifempty
+    create 644 _llmserver wheel
+}
 ```
 
-Owner must be `_llmserver:wheel` throughout — all serving daemons run as
-`_llmserver` and their log directories must be owned by that account. Do
-**not** use the `G` flag: all daemons are managed by launchd via
-`StandardOutPath`/`StandardErrorPath`. launchd writes into the new file after
-newsyslog renames the old one without needing a signal. Log directories must
-also be created with `chown _llmserver:wheel` before the daemon first starts,
-or the daemon will fail to write logs.
+The `com.llm-server.logrotate` LaunchDaemon (from Item 2 Part B) covers all
+tools from a single plist — no additional daemon needed.
 
-Rotation at 100 MB, 5 copies = max ~500 MB stderr per tool. The newsyslog
-conf file should be removed by the restore ops.
+**Prerequisites before writing the config:**
+- `sudo mkdir -p /etc/logrotate.d` — this directory does not exist by default
+  on macOS and must be created explicitly
+- Log directories for each tool must exist and be owned `_llmserver:wheel`
+  before the daemon first starts
+- Config file must be written with `sudo tee` so it is root-owned; logrotate
+  refuses to read config files not owned by root when running as root
+
+Rotation at 100 MB, 5 copies = max ~500 MB stderr per tool.
 
 **Scope:** `internal/ops/tools.go` — all four `*Plist()` functions + log
-directory creation for Exo. `internal/ops/restore.go` — remove
-`/etc/newsyslog.d/llm-servers.conf` on restore.
+directory creation for Exo + write `/etc/logrotate.d/llm-servers` and install
+`com.llm-server.logrotate` plist during Install Tools.
+`internal/ops/restore.go` — remove `/etc/logrotate.d/llm-servers` and bootout
+`com.llm-server.logrotate` on restore.
 
 ---
 
@@ -185,8 +268,8 @@ directory creation for Exo. `internal/ops/restore.go` — remove
 
 - Items 1 and 2 are related and should be implemented together in the same
   phase — both touch the Ollama plist generation in the ops layer.
-- newsyslog config should be added to `restore.sh` / the restore ops so it
-  is cleaned up on restore.
+- The logrotate config and `com.llm-server.logrotate` plist must be added to
+  the restore ops so they are cleaned up on restore.
 - The `OLLAMA_MODELS` resolved-path logic applies only when
   `storage.use_external_volume` is `true`. When using internal storage the
   default Ollama path should be left unchanged.

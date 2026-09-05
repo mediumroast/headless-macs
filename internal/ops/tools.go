@@ -126,6 +126,8 @@ func RunTools(cfg *config.Config) (*ToolsResult, error) {
 		r.add("EXO", ActionSkip, "Exo disabled in config", "")
 	}
 
+	r.installLogRotate()
+
 	ilog.Info(fmt.Sprintf("Log written to: %s", logPath))
 	return r, nil
 }
@@ -289,6 +291,20 @@ func (r *ToolsResult) installOllama(cfg *config.Config, localhostOnly bool) {
 	_ = exec.Command("mdutil", "-E", modelsDir).Run()
 	r.add(section, ActionInfo, "Models dir: "+modelsDir+" (Spotlight excluded)", "")
 
+	// When modelsDir is a symlink onto an external volume (the default when
+	// storage.use_external_volume + symlink_internal_paths are both true),
+	// Ollama's own path-traversal check fails against the symlink and spams
+	// "ensure path elements are traversable" on every startup. Resolve to the
+	// real absolute path for the env var only — the symlink itself is left in
+	// place for everything else that expects it. See FUTURES.md history.
+	ollamaModelsEnv := modelsDir
+	if cfg.Storage.UseExternalVolume {
+		if resolved, err := filepath.EvalSymlinks(modelsDir); err == nil && resolved != modelsDir {
+			ollamaModelsEnv = resolved
+			r.add(section, ActionInfo, "OLLAMA_MODELS resolved to "+resolved+" (bypasses symlink startup error)", "")
+		}
+	}
+
 	// Log directory
 	_ = os.MkdirAll("/var/log/ollama", 0755)
 	_ = exec.Command("chown", llmserverUser+":"+llmserverUser, "/var/log/ollama").Run()
@@ -316,6 +332,10 @@ func (r *ToolsResult) installOllama(cfg *config.Config, localhostOnly bool) {
 	if cfg.Tools.Ollama.FlashAttention {
 		flashAttn = "1"
 	}
+	logLevel := cfg.Tools.Ollama.LogLevel
+	if logLevel == "" {
+		logLevel = "warn"
+	}
 
 	ctxDisplay := maxCtx
 	if ctxDisplay == "" {
@@ -325,9 +345,9 @@ func (r *ToolsResult) installOllama(cfg *config.Config, localhostOnly bool) {
 		ramGB, maxLoaded, numPar, ctxDisplay), "")
 
 	plistPath := "/Library/LaunchDaemons/com.ollama.server.plist"
-	plistContent := ollamaPlist(ollamaBin, host, modelsDir, llmserverHome, keepAlive,
+	plistContent := ollamaPlist(ollamaBin, host, ollamaModelsEnv, llmserverHome, keepAlive,
 		fmt.Sprintf("%d", numPar), fmt.Sprintf("%d", maxLoaded), maxCtx,
-		flashAttn, gpuPct, llmserverUser)
+		flashAttn, gpuPct, logLevel, llmserverUser)
 
 	if err := os.WriteFile(plistPath, []byte(plistContent), 0644); err != nil {
 		r.add(section, ActionFail, "Could not write Ollama plist: "+err.Error(), "")
@@ -415,7 +435,7 @@ func ollamaAutoTune(ramGB int) (maxLoaded, numPar int, maxCtx string) {
 	}
 }
 
-func ollamaPlist(bin, host, modelsDir, home, keepAlive, numPar, maxLoaded, maxCtx, flashAttn, gpuPct, user string) string {
+func ollamaPlist(bin, host, modelsDir, home, keepAlive, numPar, maxLoaded, maxCtx, flashAttn, gpuPct, logLevel, user string) string {
 	maxCtxKey := ""
 	if maxCtx != "" {
 		maxCtxKey = fmt.Sprintf("    <key>OLLAMA_MAX_CONTEXT</key><string>%s</string>\n", maxCtx)
@@ -447,13 +467,14 @@ func ollamaPlist(bin, host, modelsDir, home, keepAlive, numPar, maxLoaded, maxCt
 %s    <key>OLLAMA_FLASH_ATTENTION</key><string>%s</string>
     <key>OLLAMA_NUM_GPU</key><string>1</string>
     <key>OLLAMA_GPU_PERCENT</key><string>%s</string>
+    <key>OLLAMA_LOG_LEVEL</key><string>%s</string>
     <key>OLLAMA_ORIGINS</key><string>*</string>
   </dict>
   <key>WorkingDirectory</key><string>/tmp</string>
   <key>UserName</key><string>%s</string>
 </dict>
 </plist>
-`, bin, home, modelsDir, host, keepAlive, numPar, maxLoaded, maxCtxKey, flashAttn, gpuPct, user)
+`, bin, home, modelsDir, host, keepAlive, numPar, maxLoaded, maxCtxKey, flashAttn, gpuPct, logLevel, user)
 }
 
 // ---------------------------------------------------------------------------
@@ -570,6 +591,11 @@ func (r *ToolsResult) installRapidMLX(cfg *config.Config, localhostOnly bool) {
 		fmt.Sprintf("http://localhost:%s/v1/models", port), ".", 10)
 }
 
+// rapidMLXPlist quiets logging via serve's own --log-level flag. Confirmed
+// against raullenchai/Rapid-MLX docs/reference/cli.md (2026-09-05): "--log-level
+// | Log level for Python logging and uvicorn (DEBUG, INFO, WARNING, ERROR;
+// case-insensitive) | INFO" — supersedes the earlier env-var-fallback
+// guess recorded in FUTURES.md/PHASE_7_PLAN.md history.
 func rapidMLXPlist(bin, host, port, model, prefill string, noThinking bool, cache, home, user string) string {
 	noThinkArg := ""
 	if noThinking {
@@ -589,6 +615,7 @@ func rapidMLXPlist(bin, host, port, model, prefill string, noThinking bool, cach
     <string>--host</string><string>%s</string>
     <string>--port</string><string>%s</string>
     <string>--prefill-step-size</string><string>%s</string>
+    <string>--log-level</string><string>WARNING</string>
 %s  </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -692,6 +719,7 @@ func mlxLMPlist(python, host, port, model, modelPath, home, user string) string 
     <string>--host</string><string>%s</string>
     <string>--port</string><string>%s</string>
     <string>--model</string><string>%s</string>
+    <string>--log-level</string><string>WARNING</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -793,6 +821,7 @@ func infinityPlist(python, host, port, model, engine, home, user string) string 
     <string>--model-id</string><string>%s</string>
     <string>--engine</string><string>%s</string>
     <string>--device</string><string>mps</string>
+    <string>--log-level</string><string>warning</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -837,13 +866,32 @@ func (r *ToolsResult) installExo(cfg *config.Config) {
 	if cfg.Tools.Exo.ChatGPTAPIPort == 0 {
 		port = "52415"
 	}
-	discovery := cfg.Tools.Exo.DiscoveryModule
-	if discovery == "" {
-		discovery = "tailscale"
-	}
+	bootstrapPeers := strings.Join(cfg.Tools.Exo.BootstrapPeers, ",")
 	exoBin := "/opt/homebrew/bin/exo"
 	if p, err := exec.LookPath("exo"); err == nil {
 		exoBin = p
+	}
+
+	// Exo runs as a LaunchAgent under the real logged-in user's GUI session
+	// (no UserName key in its plist — see below), not _llmserver, so its log
+	// and state directories must be owned by that same real user, not the
+	// service account.
+	sudoUser := os.Getenv("SUDO_USER")
+
+	_ = os.MkdirAll("/var/log/exo", 0755)
+	if sudoUser != "" {
+		_ = exec.Command("chown", sudoUser+":staff", "/var/log/exo").Run()
+	}
+
+	// EXO_HOME relocates exo's own config/data/cache root — including its
+	// internal exo_log/exo.log and exo_log/runner_log/{stdout,stderr}.log,
+	// which have no launchd redirection since exo manages them itself — out
+	// of the default hidden ~/.exo into a discoverable, project-managed path
+	// consistent with /Library/Ollama, /Library/RapidMLX, etc.
+	exoHome := "/Library/Exo"
+	_ = os.MkdirAll(exoHome, 0755)
+	if sudoUser != "" {
+		_ = exec.Command("chown", "-R", sudoUser+":staff", exoHome).Run()
 	}
 
 	// Exo runs as a LaunchAgent — needs user context for peer discovery.
@@ -853,7 +901,7 @@ func (r *ToolsResult) installExo(cfg *config.Config) {
 	_ = os.MkdirAll(agentDir, 0755)
 
 	plistPath := filepath.Join(agentDir, "com.exo.node.plist")
-	plistContent := exoPlist(exoBin, port, discovery, userHome)
+	plistContent := exoPlist(exoBin, port, bootstrapPeers, userHome, exoHome)
 	if err := os.WriteFile(plistPath, []byte(plistContent), 0644); err != nil {
 		r.add(section, ActionFail, "Could not write Exo plist: "+err.Error(), "")
 		return
@@ -870,13 +918,27 @@ func (r *ToolsResult) installExo(cfg *config.Config) {
 	hostname, _ := os.Hostname()
 	r.add(section, ActionInfo,
 		fmt.Sprintf("API endpoint: http://%s:%s/v1/chat/completions", hostname, port), "")
+	r.add(section, ActionInfo, "State/logs: "+exoHome+" (exo_log/exo.log, exo_log/runner_log/)", "")
 	r.add(section, ActionWarn,
 		"Exo requires auto-login for true headless operation",
 		"Configure: sudo sysadminctl -autologin set -userName <user> -password <pw>")
-	r.add(section, ActionWarn, "For Tailscale discovery: ensure tailscaled is running on all nodes", "")
+	if bootstrapPeers == "" {
+		r.add(section, ActionInfo,
+			"No bootstrap_peers configured — nodes on the same LAN/namespace auto-discover; "+
+				"set tools.exo.bootstrap_peers for cross-network clustering", "")
+	}
 }
 
-func exoPlist(bin, port, discovery, home string) string {
+// exoPlist uses exo's actual current CLI (--api-port, --bootstrap-peers) —
+// the plist previously passed --chatgpt-api-port and --discovery-module,
+// neither of which exist in any current exo release (confirmed against
+// exo-explore/exo main, 2026-09-05); exo would have rejected both as
+// unrecognized arguments and failed to start. See PHASE_7_PLAN.md history.
+func exoPlist(bin, port, bootstrapPeers, home, exoHome string) string {
+	peersArg := ""
+	if bootstrapPeers != "" {
+		peersArg = "    <string>--bootstrap-peers</string><string>" + bootstrapPeers + "</string>\n"
+	}
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -886,21 +948,193 @@ func exoPlist(bin, port, discovery, home string) string {
   <key>ProgramArguments</key>
   <array>
     <string>%s</string>
-    <string>--chatgpt-api-port</string><string>%s</string>
-    <string>--discovery-module</string><string>%s</string>
-  </array>
+    <string>--api-port</string><string>%s</string>
+%s  </array>
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOME</key><string>%s</string>
     <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>EXO_HOME</key><string>%s</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/tmp/exo-stdout.log</string>
-  <key>StandardErrorPath</key><string>/tmp/exo-stderr.log</string>
+  <key>StandardOutPath</key><string>/var/log/exo/stdout.log</string>
+  <key>StandardErrorPath</key><string>/var/log/exo/stderr.log</string>
 </dict>
 </plist>
-`, bin, port, discovery, home)
+`, bin, port, peersArg, home, exoHome)
+}
+
+// ---------------------------------------------------------------------------
+// Log rotation (shared across all serving tools)
+// ---------------------------------------------------------------------------
+
+const (
+	logrotateConfigPath = "/etc/logrotate.d/llm-servers"
+	logrotatePlistPath  = "/Library/LaunchDaemons/com.llm-server.logrotate.plist"
+	logrotateStatusPath = "/var/log/mac-llm-setup/logrotate.status"
+	logrotateBrewBin    = "/opt/homebrew/opt/logrotate/sbin/logrotate"
+)
+
+// logrotateBin locates the logrotate binary. Homebrew's logrotate formula is
+// not linked into PATH by default, so PATH lookup is tried first and the
+// known Homebrew opt path is the fallback.
+func logrotateBin() string {
+	if p, err := exec.LookPath("logrotate"); err == nil {
+		return p
+	}
+	return logrotateBrewBin
+}
+
+// installLogRotate writes one shared logrotate config + LaunchDaemon
+// covering every serving tool's logs (present or not — `missingok` makes
+// listing all five unconditionally safe).
+//
+// Idempotent by content comparison, not by existence: an earlier version
+// of this function skipped entirely whenever the plist already existed,
+// which meant the Exo log-rotation stanza added later in this same phase
+// would never reach a box that had already run install-tools — the file
+// "existed", so the check always skipped, permanently. Comparing generated
+// content against what's on disk means a config/plist change in a future
+// version of this code reaches every box the next time install-tools runs,
+// the same way tool plists (Ollama, Exo, etc.) already do.
+func (r *ToolsResult) installLogRotate() {
+	section := "LOGROTATE"
+
+	if _, err := os.Stat(logrotateBrewBin); err != nil {
+		if err := exec.Command("brew", "install", "logrotate").Run(); err != nil {
+			r.add(section, ActionWarn, "Could not install logrotate — serving tool logs will not be rotated", "")
+			return
+		}
+		r.add(section, ActionSet, "logrotate installed via Homebrew", "")
+	}
+	bin := logrotateBin()
+
+	if err := os.MkdirAll("/etc/logrotate.d", 0755); err != nil {
+		r.add(section, ActionFail, "Could not create /etc/logrotate.d: "+err.Error(), "")
+		return
+	}
+
+	// Exo runs under the real console user's GUI session, not _llmserver (see
+	// installExo()), and has two log surfaces of its own beyond the
+	// launchd-captured stdout/stderr: exo.log (rotates once per process
+	// start, unbounded within a run) and the runner subprocess's
+	// stdout/stderr (no rotation at all, ever). All three need covering here
+	// — see PHASE_7_PLAN.md history for how these were found.
+	exoOwner := "root wheel"
+	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+		exoOwner = sudoUser + " staff"
+	}
+
+	config := fmt.Sprintf(`/var/log/ollama/stderr.log
+/var/log/ollama/stdout.log
+/var/log/rapid-mlx/stderr.log
+/var/log/rapid-mlx/stdout.log
+/var/log/mlx-lm/stderr.log
+/var/log/mlx-lm/stdout.log
+/var/log/infinity/stderr.log
+/var/log/infinity/stdout.log
+{
+    size 100M
+    rotate 5
+    compress
+    copytruncate
+    missingok
+    notifempty
+    create 644 _llmserver wheel
+}
+
+/var/log/exo/stderr.log
+/var/log/exo/stdout.log
+/Library/Exo/exo_log/exo.log
+/Library/Exo/exo_log/runner_log/stdout.log
+/Library/Exo/exo_log/runner_log/stderr.log
+{
+    size 100M
+    rotate 5
+    compress
+    copytruncate
+    missingok
+    notifempty
+    create 644 %s
+}
+`, exoOwner)
+
+	configChanged := true
+	if existing, err := os.ReadFile(logrotateConfigPath); err == nil && string(existing) == config {
+		configChanged = false
+	}
+	if configChanged {
+		if err := os.WriteFile(logrotateConfigPath, []byte(config), 0644); err != nil {
+			r.add(section, ActionFail, "Could not write "+logrotateConfigPath+": "+err.Error(), "")
+			return
+		}
+		_ = exec.Command("chown", "root:wheel", logrotateConfigPath).Run()
+		_ = exec.Command("chmod", "644", logrotateConfigPath).Run()
+		r.add(section, ActionSet, "Wrote "+logrotateConfigPath+" (100M/5 copies, all serving tools)", "")
+	} else {
+		r.add(section, ActionSkip, logrotateConfigPath+" already up to date", "")
+	}
+
+	_ = os.MkdirAll("/var/log/mac-llm-setup", 0755)
+	plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.llm-server.logrotate</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>%s</string>
+    <string>-s</string>
+    <string>%s</string>
+    <string>%s</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>2</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>/var/log/mac-llm-setup/logrotate-stdout.log</string>
+  <key>StandardErrorPath</key><string>/var/log/mac-llm-setup/logrotate-stderr.log</string>
+</dict>
+</plist>
+`, bin, logrotateStatusPath, logrotateConfigPath)
+
+	_, statErr := os.Stat(logrotatePlistPath)
+	freshInstall := os.IsNotExist(statErr)
+
+	plistChanged := true
+	if existing, err := os.ReadFile(logrotatePlistPath); err == nil && string(existing) == plist {
+		plistChanged = false
+	}
+
+	if plistChanged {
+		if err := os.WriteFile(logrotatePlistPath, []byte(plist), 0644); err != nil {
+			r.add(section, ActionFail, "Could not write "+logrotatePlistPath+": "+err.Error(), "")
+			return
+		}
+		_ = exec.Command("chown", "root:wheel", logrotatePlistPath).Run()
+		_ = exec.Command("chmod", "644", logrotatePlistPath).Run()
+		loadDaemon(logrotatePlistPath)
+		if freshInstall {
+			r.add(section, ActionSet, "com.llm-server.logrotate installed (daily 2 AM)", "")
+		} else {
+			r.add(section, ActionSet, "com.llm-server.logrotate content changed — reloaded", "")
+		}
+	} else {
+		r.add(section, ActionSkip, "com.llm-server.logrotate already up to date", "")
+	}
+
+	// Baseline rotation only on a genuinely fresh install — re-running this
+	// on every content tweak would force-rotate logs the operator didn't
+	// ask to rotate yet.
+	if freshInstall {
+		if exec.Command(bin, "-f", "-s", logrotateStatusPath, logrotateConfigPath).Run() == nil {
+			r.add(section, ActionInfo, "Initial log rotation baseline applied", "")
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -914,8 +1148,17 @@ func loadDaemon(plist string) {
 	_ = exec.Command("launchctl", "bootstrap", "system", plist).Run()
 }
 
-// checkEndpoint performs a simple HTTP GET and records the result.
-func (r *ToolsResult) checkEndpoint(section, name, url, _ string, timeoutSecs int) {
+// checkEndpoint performs an HTTP GET and records the result, optionally
+// checking the status code and a body substring — the `pattern` argument
+// existed since this was ported from the bash pipeline's
+// `check_endpoint "name" "url" "pattern"` but was discarded (`_`) rather
+// than implemented, so every call here passed on any successful TCP
+// round-trip regardless of status code or body content. `pattern == "."`
+// preserves the original bash `grep .` idiom (match any non-empty body,
+// not a literal period) used by every existing caller; `pattern == ""`
+// skips body checking entirely; anything else must appear verbatim in the
+// body. See PHASE_7_PLAN.md Phase 7I.
+func (r *ToolsResult) checkEndpoint(section, name, url, pattern string, timeoutSecs int) {
 	client := &http.Client{Timeout: time.Duration(timeoutSecs) * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
@@ -925,6 +1168,29 @@ func (r *ToolsResult) checkEndpoint(section, name, url, _ string, timeoutSecs in
 		return
 	}
 	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		r.add(section, ActionWarn,
+			fmt.Sprintf("%s API returned HTTP %d — may still be starting", name, resp.StatusCode),
+			fmt.Sprintf("Check: sudo launchctl print system/%s", strings.ToLower(name)))
+		return
+	}
+	switch {
+	case pattern == "":
+		// no content check requested
+	case pattern == ".":
+		if len(body) == 0 {
+			r.add(section, ActionWarn, fmt.Sprintf("%s API responded with an empty body", name), "")
+			return
+		}
+	default:
+		if !strings.Contains(string(body), pattern) {
+			r.add(section, ActionWarn,
+				fmt.Sprintf("%s API responded but body did not contain %q — may still be starting", name, pattern), "")
+			return
+		}
+	}
 	r.add(section, ActionSet, fmt.Sprintf("%s API responding (%s)", name, url), "")
 }
 

@@ -11,6 +11,7 @@ package ops
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -167,14 +168,85 @@ func (r *VerifyResult) checkDaemon(section, label string) bool {
 	return running
 }
 
-func (r *VerifyResult) checkHTTP(section, name, url string, timeoutSecs int) {
+// checkLogLevelFlag confirms a tool's plist actually has --log-level in its
+// ProgramArguments — added for mlx-lm, Infinity, and Rapid-MLX in the same
+// phase that gave Ollama and Exo equivalent checks; these three had none
+// (found on review, see PHASE_7_PLAN.md Phase 7I).
+func (r *VerifyResult) checkLogLevelFlag(section, plistPath string) {
+	data, err := os.ReadFile(plistPath)
+	if err != nil {
+		return // daemon not installed yet — checkDaemon already reports this
+	}
+	if plistHasArg(string(data), "--log-level") {
+		r.pass(section, "--log-level flag present", "")
+	} else {
+		r.warn(section, "--log-level flag missing from plist — logging at tool default verbosity",
+			"Fix: sudo headless-macs install-tools")
+	}
+}
+
+// plistHasArg reports whether a <string>arg</string> element is present in
+// a plist's raw XML — the ProgramArguments-array equivalent of
+// extractPlistString, which only handles EnvironmentVariables' <key>/<string>
+// dict pairs. Used to confirm a CLI flag (e.g. --log-level) is actually in
+// the written plist, not just assumed from the generator code.
+func plistHasArg(plist, arg string) bool {
+	return strings.Contains(plist, "<string>"+arg+"</string>")
+}
+
+// extractPlistString pulls the value of <key>key</key><string>VALUE</string>
+// from a plist's raw XML, matching the single-line format this project's
+// plist generators emit. Returns "" if the key isn't present.
+func extractPlistString(plist, key string) string {
+	marker := "<key>" + key + "</key><string>"
+	idx := strings.Index(plist, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := plist[idx+len(marker):]
+	end := strings.Index(rest, "</string>")
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
+}
+
+// checkHTTP restores the original bash `check_http "name" "url" "pattern"`
+// contract (documented in CLAUDE.md's verify.sh contract) that the Go port
+// never carried over — it previously passed on any successful TCP
+// round-trip, with no status-code or body check at all. `pattern == "."`
+// means "any non-empty body" (the bash `grep .` idiom used by every
+// existing install-time check in tools.go's checkEndpoint, kept consistent
+// here); `pattern == ""` skips body checking; anything else must appear
+// verbatim in the body. See PHASE_7_PLAN.md Phase 7I.
+func (r *VerifyResult) checkHTTP(section, name, url, pattern string, timeoutSecs int) {
 	client := &http.Client{Timeout: time.Duration(timeoutSecs) * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
 		r.fail(section, fmt.Sprintf("%s API not responding (%s)", name, url), "")
 		return
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		r.fail(section, fmt.Sprintf("%s API returned HTTP %d (%s)", name, resp.StatusCode, url), "")
+		return
+	}
+	switch {
+	case pattern == "":
+		// no content check requested
+	case pattern == ".":
+		if len(body) == 0 {
+			r.fail(section, fmt.Sprintf("%s API responded with an empty body (%s)", name, url), "")
+			return
+		}
+	default:
+		if !strings.Contains(string(body), pattern) {
+			r.fail(section, fmt.Sprintf("%s API responded but body did not contain %q (%s)", name, pattern, url), "")
+			return
+		}
+	}
 	r.pass(section, fmt.Sprintf("%s API responding (%s)", name, url), "")
 }
 
@@ -258,6 +330,56 @@ func (r *VerifyResult) sectionSystem(cfg *config.Config, sipEnabled bool) {
 	// MacBook clamshell reminder
 	if strings.Contains(strings.ToLower(sysctl("hw.model")), "macbook") {
 		r.warn(sec, "MacBook detected — confirm HDMI dummy plug is connected for headless operation", "")
+	}
+
+	// logrotate daemon (Phase 7) — StartCalendarInterval + RunAtLoad=false, so
+	// "running" is not expected between 2 AM firings; any loaded/scheduled
+	// state is a pass.
+	lrOut, _ := exec.Command("launchctl", "print", "system/com.llm-server.logrotate").Output()
+	lrStr := string(lrOut)
+	if strings.Contains(lrStr, "state = running") || strings.Contains(lrStr, "state = waiting") ||
+		strings.Contains(lrStr, "spawn scheduled") || strings.Contains(lrStr, "last exit code") {
+		r.pass(sec, "logrotate daemon present (serving tool logs bounded to 100M x5)", "")
+	} else {
+		r.warn(sec, "logrotate daemon not found — serving tool logs may grow unbounded",
+			"Fix: sudo headless-macs install-tools")
+	}
+
+	// Config content, not just daemon presence: the daemon being loaded
+	// doesn't mean its config lists every path it should — a box that ran
+	// install-tools before a later addition (e.g. Exo's log paths, added
+	// after this config was first written) can have a "present" daemon
+	// running against stale content. See PHASE_7_PLAN.md Phase 7H/7I.
+	if data, err := os.ReadFile(logrotateConfigPath); err == nil {
+		content := string(data)
+		expectedPaths := []string{
+			"/var/log/ollama/stderr.log",
+			"/var/log/ollama/stdout.log",
+			"/var/log/rapid-mlx/stderr.log",
+			"/var/log/rapid-mlx/stdout.log",
+			"/var/log/mlx-lm/stderr.log",
+			"/var/log/mlx-lm/stdout.log",
+			"/var/log/infinity/stderr.log",
+			"/var/log/infinity/stdout.log",
+			"/var/log/exo/stderr.log",
+			"/var/log/exo/stdout.log",
+			"/Library/Exo/exo_log/exo.log",
+			"/Library/Exo/exo_log/runner_log/stdout.log",
+			"/Library/Exo/exo_log/runner_log/stderr.log",
+		}
+		var missing []string
+		for _, p := range expectedPaths {
+			if !strings.Contains(content, p) {
+				missing = append(missing, p)
+			}
+		}
+		if len(missing) == 0 {
+			r.pass(sec, "logrotate config covers all expected log paths", "")
+		} else {
+			r.warn(sec, fmt.Sprintf("logrotate config missing %d expected path(s): %s",
+				len(missing), strings.Join(missing, ", ")),
+				"Fix: sudo headless-macs install-tools (rewrites the config if content changed)")
+		}
 	}
 
 	_ = sipEnabled // used in log header
@@ -373,7 +495,28 @@ func (r *VerifyResult) sectionOllama(cfg *config.Config) {
 	}
 
 	r.checkDaemon(sec, "com.ollama.server")
-	r.checkHTTP(sec, "Ollama", "http://localhost:11434/api/tags", 5)
+	r.checkHTTP(sec, "Ollama", "http://localhost:11434/api/tags", "models", 5)
+
+	// Log verbosity + symlink-bypass checks (Phase 7)
+	if plist, err := os.ReadFile("/Library/LaunchDaemons/com.ollama.server.plist"); err == nil {
+		content := string(plist)
+		if strings.Contains(content, "<key>OLLAMA_LOG_LEVEL</key>") {
+			r.pass(sec, "OLLAMA_LOG_LEVEL configured", "")
+		} else {
+			r.warn(sec, "OLLAMA_LOG_LEVEL not set — Ollama logging at default verbosity",
+				"Fix: sudo headless-macs install-tools")
+		}
+		if cfg.Storage.UseExternalVolume {
+			if modelsDir := extractPlistString(content, "OLLAMA_MODELS"); modelsDir != "" {
+				if fi, err := os.Lstat(modelsDir); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+					r.warn(sec, "OLLAMA_MODELS ("+modelsDir+") is a symlink — may trigger the startup traversal error",
+						"Fix: sudo headless-macs install-tools (re-resolves the path)")
+				} else {
+					r.pass(sec, "OLLAMA_MODELS resolved to a real path ("+modelsDir+")", "")
+				}
+			}
+		}
+	}
 
 	// Model count
 	client := &http.Client{Timeout: 5 * time.Second}
@@ -411,7 +554,8 @@ func (r *VerifyResult) sectionRapidMLX(cfg *config.Config) {
 	if cfg.Tools.RapidMLX.Port == 0 {
 		port = "8080"
 	}
-	r.checkHTTP(sec, "Rapid-MLX", fmt.Sprintf("http://localhost:%s/v1/models", port), 15)
+	r.checkHTTP(sec, "Rapid-MLX", fmt.Sprintf("http://localhost:%s/v1/models", port), ".", 15)
+	r.checkLogLevelFlag(sec, "/Library/LaunchDaemons/com.rapid-mlx.server.plist")
 }
 
 // ---------------------------------------------------------------------------
@@ -437,7 +581,8 @@ func (r *VerifyResult) sectionMLXLM(cfg *config.Config) {
 		port = "8000"
 	}
 	r.checkDaemon(sec, "com.mlx-lm.server")
-	r.checkHTTP(sec, "mlx-lm", fmt.Sprintf("http://localhost:%s/v1/models", port), 10)
+	r.checkHTTP(sec, "mlx-lm", fmt.Sprintf("http://localhost:%s/v1/models", port), ".", 10)
+	r.checkLogLevelFlag(sec, "/Library/LaunchDaemons/com.mlx-lm.server.plist")
 }
 
 // ---------------------------------------------------------------------------
@@ -457,7 +602,8 @@ func (r *VerifyResult) sectionInfinity(cfg *config.Config) {
 		port = "7997"
 	}
 	r.checkDaemon(sec, "com.infinity.server")
-	r.checkHTTP(sec, "Infinity", fmt.Sprintf("http://localhost:%s/health", port), 10)
+	r.checkHTTP(sec, "Infinity", fmt.Sprintf("http://localhost:%s/health", port), ".", 10)
+	r.checkLogLevelFlag(sec, "/Library/LaunchDaemons/com.infinity.server.plist")
 }
 
 // ---------------------------------------------------------------------------
@@ -484,7 +630,32 @@ func (r *VerifyResult) sectionExo(cfg *config.Config) {
 	if cfg.Tools.Exo.ChatGPTAPIPort == 0 {
 		port = "52415"
 	}
-	r.checkHTTP(sec, "Exo", fmt.Sprintf("http://localhost:%s/v1/models", port), 10)
+	r.checkHTTP(sec, "Exo", fmt.Sprintf("http://localhost:%s/v1/models", port), ".", 10)
+
+	// Log location (Phase 7) — Exo used to log to /tmp/, which is lost on reboot.
+	if _, err := os.Stat("/tmp/exo-stdout.log"); err == nil {
+		r.warn(sec, "Exo still logging to /tmp — re-run Install Tools to move logs to /var/log/exo", "")
+	} else if _, err := os.Stat("/var/log/exo"); err == nil {
+		r.pass(sec, "Exo logging to /var/log/exo", "")
+	}
+
+	// Plist correctness + EXO_HOME (Phase 7 exo fixes). --chatgpt-api-port and
+	// --discovery-module are not real exo flags — a plist written before this
+	// fix would cause exo to reject them and fail to start.
+	exoPlistPath := realUserHome() + "/Library/LaunchAgents/com.exo.node.plist"
+	if data, err := os.ReadFile(exoPlistPath); err == nil {
+		content := string(data)
+		if strings.Contains(content, "--chatgpt-api-port") || strings.Contains(content, "--discovery-module") {
+			r.fail(sec, "Exo plist has invalid flags (--chatgpt-api-port/--discovery-module do not exist in exo's CLI)",
+				"Fix: sudo headless-macs install-tools")
+		}
+		if home := extractPlistString(content, "EXO_HOME"); home != "" {
+			r.pass(sec, "EXO_HOME set to "+home, "")
+		} else {
+			r.warn(sec, "EXO_HOME not set — exo's own logs/state default to the hidden ~/.exo",
+				"Fix: sudo headless-macs install-tools")
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------

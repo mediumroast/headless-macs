@@ -112,6 +112,7 @@ func (r *RestoreResult) sectionRemoveDaemons() {
 		{"/Library/LaunchDaemons/com.llm-server.maxfiles.plist", "com.llm-server.maxfiles"},
 		{"/Library/LaunchDaemons/com.llm-server.pmset-heal.plist", "com.llm-server.pmset-heal"},
 		{"/Library/LaunchDaemons/com.llm-server.storage-mount.plist", "com.llm-server.storage-mount"},
+		{logrotatePlistPath, "com.llm-server.logrotate"},
 	}
 
 	for _, d := range daemons {
@@ -124,6 +125,14 @@ func (r *RestoreResult) sectionRemoveDaemons() {
 		}
 		// Belt-and-suspenders: disable by label even if plist is gone
 		_ = exec.Command("launchctl", "disable", "system/"+d.label).Run()
+	}
+
+	// logrotate config (not a daemon, but installed alongside com.llm-server.logrotate)
+	if _, err := os.Stat(logrotateConfigPath); err == nil {
+		os.Remove(logrotateConfigPath)
+		r.add(sec, ActionSet, "Removed "+logrotateConfigPath, "")
+	} else {
+		r.add(sec, ActionSkip, logrotateConfigPath+" (not present)", "")
 	}
 
 	// Exo LaunchAgent (user-level)

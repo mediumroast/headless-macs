@@ -32,6 +32,7 @@ type OllamaTool struct {
 	KeepAlive      int    `json:"keep_alive"`
 	FlashAttention bool   `json:"flash_attention"`
 	GPUPercent     int    `json:"gpu_percent"`
+	LogLevel       string `json:"log_level"`
 }
 
 type RapidMLXTool struct {
@@ -62,9 +63,17 @@ type InfinityTool struct {
 }
 
 type ExoTool struct {
-	Enabled          bool `json:"enabled"`
-	ChatGPTAPIPort   int  `json:"chatgpt_api_port"`
-	DiscoveryModule  string `json:"discovery_module"`
+	Enabled bool `json:"enabled"`
+	// ChatGPTAPIPort maps to exo's real --api-port flag (the JSON key name
+	// is kept for config compatibility — it's still the port serving exo's
+	// OpenAI/ChatGPT-compatible API).
+	ChatGPTAPIPort int `json:"chatgpt_api_port"`
+	// BootstrapPeers maps to exo's --bootstrap-peers flag (comma-separated
+	// libp2p multiaddrs of other nodes to dial on startup). Empty means a
+	// single-node exo instance. Replaces the former discovery_module field,
+	// which mapped to a --discovery-module flag that does not exist in any
+	// current exo release — see PHASE_7_PLAN.md history.
+	BootstrapPeers []string `json:"bootstrap_peers"`
 }
 
 type Storage struct {

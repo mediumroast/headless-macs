@@ -197,9 +197,19 @@ func (r *BaselineResult) disableService(section, domain string, sipEnabled bool)
 }
 
 // installLaunchDaemon writes a plist and bootstraps it if not already present.
+// installLaunchDaemon is idempotent by content comparison, not by
+// existence: an existence-only check ("skip if the plist is already
+// there") can never pick up a content change in a later version of this
+// code — the same class of bug found in installLogRotate() (tools.go,
+// see PHASE_7_PLAN.md history). Comparing generated content against what's
+// on disk means any future change to one of this helper's callers
+// (caffeinate, sysctl-tuning, maxfiles, pmset-heal) reaches an existing
+// box the next time Baseline runs, instead of silently never applying.
 func (r *BaselineResult) installLaunchDaemon(section, plistPath, label, content string) {
-	if _, err := os.Stat(plistPath); err == nil {
-		r.add(section, ActionSkip, fmt.Sprintf("%s already installed", label), "")
+	existing, err := os.ReadFile(plistPath)
+	freshInstall := os.IsNotExist(err)
+	if err == nil && string(existing) == content {
+		r.add(section, ActionSkip, fmt.Sprintf("%s already installed and up to date", label), "")
 		return
 	}
 	if err := os.WriteFile(plistPath, []byte(content), 0o644); err != nil {
@@ -208,11 +218,21 @@ func (r *BaselineResult) installLaunchDaemon(section, plistPath, label, content 
 	}
 	_ = runCmd("chown", "root:wheel", plistPath)
 	_ = runCmd("chmod", "644", plistPath)
+	if !freshInstall {
+		// Reload rather than bootstrap-over-loaded: content changed under an
+		// already-running daemon, so the old instance must be booted out
+		// first or launchd won't pick up the new plist.
+		_ = runCmd("launchctl", "bootout", "system", plistPath)
+	}
 	if err := runCmd("launchctl", "bootstrap", "system", plistPath); err != nil {
 		r.add(section, ActionWarn, fmt.Sprintf("%s written but bootstrap failed: %v", label, err), "")
 		return
 	}
-	r.add(section, ActionSet, fmt.Sprintf("%s installed and started", label), "")
+	if freshInstall {
+		r.add(section, ActionSet, fmt.Sprintf("%s installed and started", label), "")
+	} else {
+		r.add(section, ActionSet, fmt.Sprintf("%s content changed — reloaded", label), "")
+	}
 }
 
 func (r *BaselineResult) defaultsWrite(section string, args ...string) {

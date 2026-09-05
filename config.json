@@ -6,7 +6,8 @@
       "models_dir": "/Library/Ollama/models",
       "keep_alive": 86400,
       "flash_attention": true,
-      "gpu_percent": 80
+      "gpu_percent": 80,
+      "log_level": "warn"
     },
     "rapid_mlx": {
       "enabled": false,
@@ -34,8 +35,8 @@
     },
     "exo": {
       "enabled": false,
-      "discovery_module": "tailscale",
-      "chatgpt_api_port": 52415
+      "chatgpt_api_port": 52415,
+      "bootstrap_peers": []
     }
   },
   "storage": {

@@ -394,7 +394,15 @@ func buildFields(cfg *config.Config) []field {
 	f = append(f, field{kind: kindToolHeader, label: "Exo"})
 	f = append(f, boolField("Enabled", func() bool { return cfg.Tools.Exo.Enabled }, func(v bool) { cfg.Tools.Exo.Enabled = v }))
 	f = append(f, intField("ChatGPT API Port", func() int { return cfg.Tools.Exo.ChatGPTAPIPort }, func(v int) { cfg.Tools.Exo.ChatGPTAPIPort = v }))
-	f = append(f, strField("Discovery Module", func() string { return cfg.Tools.Exo.DiscoveryModule }, func(v string) { cfg.Tools.Exo.DiscoveryModule = v }))
+	f = append(f, strField("Bootstrap Peers (comma-separated)",
+		func() string { return strings.Join(cfg.Tools.Exo.BootstrapPeers, ",") },
+		func(v string) {
+			if v == "" {
+				cfg.Tools.Exo.BootstrapPeers = nil
+				return
+			}
+			cfg.Tools.Exo.BootstrapPeers = strings.Split(v, ",")
+		}))
 
 	// ── STORAGE ───────────────────────────────────────────────
 	f = append(f, field{kind: kindSectionHeader, label: "STORAGE"})

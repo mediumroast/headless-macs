@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -95,6 +96,7 @@ func RunPrecheck(cfg *config.Config) (*PrecheckResult, error) {
 	r.checkNetwork(cfg)
 	r.checkStorage(cfg)
 	r.checkPower()
+	r.checkConfigKeys()
 	r.finalise()
 
 	if err := r.writeJSON(); err != nil {
@@ -549,6 +551,93 @@ func (r *PrecheckResult) checkPower() {
 				r.info("POWER", fmt.Sprintf("pmset %s=%s (setup.sh will set to %s)", key, val, expected))
 			}
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Section: stale/removed config.json keys
+// ---------------------------------------------------------------------------
+
+// renamedConfigKeys maps a dotted JSON key path that has been removed or
+// renamed to a human explanation, shown instead of the generic
+// "unrecognized key" message when a match is found. Add an entry here
+// whenever a future phase renames or removes a config.json field, so an
+// existing install's stale key gets a specific, actionable message instead
+// of json.Unmarshal silently ignoring it forever.
+var renamedConfigKeys = map[string]string{
+	"tools.exo.discovery_module": "renamed to tools.exo.bootstrap_peers in Phase 7 — the old key mapped to a --discovery-module flag that never existed in exo's CLI. Remove this key; it has no effect.",
+}
+
+// checkConfigKeys flags any key present in the user's config.json that has
+// no corresponding field in the current Config struct. json.Unmarshal
+// silently ignores unknown keys by default, which means a renamed or
+// removed field (see renamedConfigKeys) sits in an operator's config file
+// forever, doing nothing, with no indication anything is wrong.
+func (r *PrecheckResult) checkConfigKeys() {
+	data, err := os.ReadFile(config.UserConfigPath())
+	if err != nil {
+		return // no user config yet — nothing to check
+	}
+	var userTree map[string]interface{}
+	if json.Unmarshal(data, &userTree) != nil {
+		return // malformed JSON is a separate problem, not this check's job
+	}
+
+	known := knownConfigKeyPaths()
+	userPaths := map[string]bool{}
+	collectKeyPaths(userTree, "", userPaths)
+
+	var stale []string
+	for path := range userPaths {
+		if !known[path] {
+			stale = append(stale, path)
+		}
+	}
+	sort.Strings(stale)
+
+	if len(stale) == 0 {
+		r.ok("CONFIG", "No stale or unrecognized keys in config.json")
+		return
+	}
+	for _, path := range stale {
+		if reason, ok := renamedConfigKeys[path]; ok {
+			r.warn("CONFIG", "config.json has a stale key: "+path, reason)
+		} else {
+			r.warn("CONFIG", "config.json has an unrecognized key: "+path,
+				"Not used by this version — may be a typo or left over from an older release")
+		}
+	}
+}
+
+// knownConfigKeyPaths returns every dotted JSON key path the current
+// Config struct defines, derived from its zero-value JSON representation
+// rather than a hand-maintained list — this stays in sync with
+// internal/config/config.go automatically as fields are added or removed.
+func knownConfigKeyPaths() map[string]bool {
+	data, _ := json.Marshal(&config.Config{})
+	var tree map[string]interface{}
+	_ = json.Unmarshal(data, &tree)
+	paths := map[string]bool{}
+	collectKeyPaths(tree, "", paths)
+	return paths
+}
+
+// collectKeyPaths walks a decoded JSON object tree, recording every
+// object-valued key's dotted path into out. Arrays and scalar leaves are
+// not descended into — a key path's presence is all that's checked here,
+// not its value's shape.
+func collectKeyPaths(node interface{}, prefix string, out map[string]bool) {
+	m, ok := node.(map[string]interface{})
+	if !ok {
+		return
+	}
+	for k, v := range m {
+		path := k
+		if prefix != "" {
+			path = prefix + "." + k
+		}
+		out[path] = true
+		collectKeyPaths(v, path, out)
 	}
 }
 

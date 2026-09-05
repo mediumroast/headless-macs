@@ -146,13 +146,33 @@ sudo launchctl bootout   system "$PLIST"   # stop and uninstall
 
 ### Idempotency guard for infrastructure daemons
 
-```bash
-if [[ ! -f "$PLIST_PATH" ]]; then
-  # write plist, chown, chmod, bootstrap
-else
-  echo "[SKIP] <label> already installed"
-fi
+Compare generated content against what's on disk — not just whether the
+plist file exists. An existence-only check can never pick up a content
+change in a later version of the code: the file "exists," so the guard
+skips forever, even after the generator's output changes. (Found the hard
+way in Phase 7: `installLogRotate()`'s existence check meant an Exo
+log-rotation stanza added later in the same phase would never reach a box
+that had already run `install-tools`.) Reload (`bootout` then `bootstrap`)
+only when content actually changed — never on every run.
+
+```go
+existing, err := os.ReadFile(plistPath)
+freshInstall := os.IsNotExist(err)
+if err == nil && string(existing) == content {
+    // [SKIP] <label> already installed and up to date
+    return
+}
+// write plist, chown, chmod
+if !freshInstall {
+    _ = runCmd("launchctl", "bootout", "system", plistPath) // reload, not bootstrap-over-loaded
+}
+_ = runCmd("launchctl", "bootstrap", "system", plistPath)
+// [SET] <label> installed and started   (fresh)
+// [SET] <label> content changed — reloaded   (updated)
 ```
+
+The old bash pipeline's `if [[ ! -f "$PLIST_PATH" ]]` existence check is
+deprecated along with the scripts that used it — do not port it forward.
 
 ### Log directories
 

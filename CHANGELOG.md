@@ -11,6 +11,81 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _Changes on the current branch not yet merged to main._
 
+Phase 7: serving-tool log management.
+
+### Fixed
+
+- **Ollama symlinked-models startup error** — `OLLAMA_MODELS` is now resolved
+  through `filepath.EvalSymlinks` before being written to the plist, so a
+  symlinked models directory (the default when using an external storage
+  volume) no longer triggers Ollama's `ensure path elements are traversable`
+  error loop on every startup
+- **Exo logs lost on reboot** — `com.exo.node` now logs to `/var/log/exo/`
+  instead of `/tmp/`
+- **Exo would not start at all** — `installExo()`/`exoPlist()` passed
+  `--chatgpt-api-port` and `--discovery-module`, neither of which exist in
+  any current exo release (confirmed against `exo-explore/exo` `main`);
+  exo's argparse would reject both as unrecognized arguments. Fixed to use
+  the real `--api-port` flag; `--discovery-module` (no such concept in
+  current exo) is removed, replaced by the new `tools.exo.bootstrap_peers`
+  config key mapping to exo's actual `--bootstrap-peers` flag
+- **Exo's own internal logs were unbounded and hidden** — exo manages two
+  log files itself outside of launchd's stdout/stderr capture:
+  `exo_log/exo.log` (rotates only once, at process start — unbounded within
+  a long-running process) and `exo_log/runner_log/{stdout,stderr}.log` (no
+  rotation at all, ever). Both defaulted to the hidden `~/.exo`. Fixed by
+  setting `EXO_HOME=/Library/Exo` (relocating exo's whole state root to a
+  discoverable, project-managed path) and extending the shared logrotate
+  config to cover both files
+- **The shared logrotate daemon could never pick up a config change** —
+  `installLogRotate()` skipped entirely once its plist existed, so the Exo
+  log-rotation stanza above would never have reached a box that had
+  already run `install-tools` once. Same bug, same fix, found in the four
+  Phase 6 infrastructure daemons (`caffeinate`, `sysctl-tuning`,
+  `maxfiles`, `pmset-heal` — all routed through one shared
+  `installLaunchDaemon()` helper): idempotency is now based on comparing
+  generated content against what's on disk, not just whether the file
+  exists, and a content change now triggers a proper reload
+  (`bootout`+`bootstrap`) instead of never being applied
+- **`checkHTTP`/`checkEndpoint` verified nothing about the response** —
+  both passed on any successful TCP round-trip regardless of HTTP status
+  code or body content (a leftover, never-implemented parameter from the
+  original bash `check_http`/`check_endpoint "name" "url" "pattern"`
+  contract). Now check status code and, when given a real pattern, body
+  content — restoring the original bash behavior. Backfilled to every
+  existing Ollama/Rapid-MLX/mlx-lm/Infinity/Exo check in `verify.go`
+
+### Added
+
+- **`tools.ollama.log_level`** config key (default `warn`) — sets
+  `OLLAMA_LOG_LEVEL` in the daemon's environment to cut Ollama's own request/
+  model-loading log noise
+- **`--log-level` verbosity flags** on mlx-lm, Infinity, and Rapid-MLX's
+  daemon invocations — confirmed against each tool's upstream CLI
+  source/docs (`ml-explore/mlx-lm`, `michaelfeil/infinity`,
+  `raullenchai/Rapid-MLX`) rather than guessed
+- **Shared `logrotate` LaunchDaemon** (`com.llm-server.logrotate`) — bounds
+  every serving tool's `stdout.log`/`stderr.log` to 100 MB × 5 rotations,
+  daily at 2 AM, via `copytruncate` (not `newsyslog`, which breaks
+  launchd-managed daemons' open file descriptors on rotation)
+- New Verify checks: Ollama's `OLLAMA_MODELS`/`OLLAMA_LOG_LEVEL` state, Exo's
+  log location + plist flag sanity + `EXO_HOME`, the logrotate daemon's
+  presence *and* config content, and `--log-level` presence for
+  mlx-lm/Infinity/Rapid-MLX (previously only Ollama and Exo had this)
+- Restore now removes the logrotate daemon and config
+- **Precheck now flags stale/unrecognized `config.json` keys** — derives
+  the set of valid keys from the `Config` struct itself, so a renamed or
+  removed field (like `tools.exo.discovery_module` above) gets a specific
+  `[WARN]` explaining what changed, instead of silently sitting in the
+  file forever doing nothing
+
+### Changed
+
+- **`tools.exo.discovery_module`** (string) replaced by
+  **`tools.exo.bootstrap_peers`** (array of strings) — the former mapped to
+  a `--discovery-module` flag that never existed in exo's CLI, so no
+  working config could have depended on it
+
 ---
 
 ## [2.1.1] — 2026-08-15

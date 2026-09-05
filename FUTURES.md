@@ -43,9 +43,50 @@ is currently applied.
 **Two-part fix:**
 
 **Part A — Reduce verbosity at the source.**
-Add `OLLAMA_LOG_LEVEL=warn` to the Ollama LaunchDaemon plist's
-`EnvironmentVariables`. This cuts log volume to actual warnings and errors only.
-Wire it into the ops layer so it is set by default and overridable via config:
+
+Two independent log streams feed into `stderr.log`:
+
+1. **Ollama's own Go logger** — controlled by `OLLAMA_LOG_LEVEL`. Setting this
+   to `warn` suppresses Ollama's own request lines and model-loading info.
+
+2. **llama-server's C++ logger** — produces all `slot`, `srv`, `cmn`, `sched`
+   lines. **This cannot be suppressed by any env var in Ollama ≤ 0.33.2.**
+
+   Ollama hardcodes `--log-verbosity 4` in the llama-server command. The env var
+   `LLAMA_ARG_LOG_VERBOSITY` is explicitly overridden by that CLI arg (confirmed
+   by runtime warning: `LLAMA_ARG_LOG_VERBOSITY … will be overwritten by command
+   line argument --log-verbosity`).
+
+   Lowering verbosity is also architecturally impossible: in the pinned
+   llama.cpp version (`b10488`) the verbosity scale is `1=ERROR 2=WARN 3=INFO
+   4=TRACE`, and the per-request noise is **split across INFO and TRACE**:
+   - Timing/slot-selection lines → `SLT_INF` (level 3)
+   - Sampler/cache/idle lines → `SLT_TRC` (level 4)
+
+   Dropping to level 3 leaves all timing and slot-selection output. Dropping to
+   level 2 loses the memory/offload startup lines Ollama's scheduler parses for
+   accounting — this breaks scheduler correctness. Tried and rejected in
+   ollama/ollama#16899.
+
+   **Upstream fix (not yet merged):** Two open PRs implement a `runnerLogFilter`
+   writer in Ollama's Go layer that filters known-routine lines before writing to
+   stderr, leaving `--log-verbosity 4` and all memory parsing intact:
+   - [ollama/ollama#17913](https://github.com/ollama/ollama/pull/17913) — allowlist-based filter
+   - [ollama/ollama#16941](https://github.com/ollama/ollama/pull/16941) — similar approach
+
+   When one of these merges, `OLLAMA_DEBUG=1` will bypass the filter (raw output
+   for debugging); the default will be filtered. **Watch for this in the next
+   Ollama minor release after 0.33.2.**
+
+   **Current mitigation:** logrotate at 100 MB / 5 copies bounds total stderr
+   to ~500 MB. Growth rate observed on doppio-1: ~20 MB/day at the current
+   gpt-oss:120b workload.
+
+Add `OLLAMA_LOG_LEVEL=warn` to the Ollama plist and wire into the ops layer:
+
+```xml
+<key>OLLAMA_LOG_LEVEL</key><string>warn</string>
+```
 
 ```json
 "tools": {
@@ -55,21 +96,107 @@ Wire it into the ops layer so it is set by default and overridable via config:
 }
 ```
 
-**Part B — Add newsyslog rotation.**
-Create `/etc/newsyslog.d/ollama.conf` during `install-tools` to cap log size
-and keep a bounded number of rotated copies:
+Do **not** add `LLAMA_ARG_LOG_VERBOSITY` to the plist — Ollama overrides it and
+it generates a spurious startup warning.
 
+**Part B — Add logrotate rotation.**
+
+**Do not use newsyslog** for this. newsyslog rotates by renaming the log file,
+which leaves the running process's file descriptor pointing to the old inode —
+new writes go to the rotated file, not the fresh empty one. Ollama (and all
+serving daemons) are managed by launchd via `StandardOutPath`/`StandardErrorPath`;
+launchd opens the fd once at daemon start and does not reopen it after a rename.
+The result is that no new log entries are written after rotation. Confirmed on
+doppio-1.
+
+Use **logrotate** (Homebrew) with `copytruncate` instead. `copytruncate`
+copies the log content then truncates the original file to zero bytes in place,
+leaving the fd valid — no restart needed.
+
+**Do not use `brew services start logrotate`** — Homebrew's config file
+(`/opt/homebrew/etc/logrotate.conf`) is owned by the brew user, not root.
+logrotate refuses to read config files not owned by root when running as root.
+Use a custom `com.llm-server.logrotate` LaunchDaemon instead (see below).
+
+**Setup steps (validated on doppio-1):**
+
+```bash
+# 1. Install logrotate
+brew install logrotate
+
+# 2. Create the config directory if it doesn't exist (not present by default on macOS)
+sudo mkdir -p /etc/logrotate.d
+
+# 3. Create a root-owned config (sudo tee ensures root ownership)
+sudo tee /etc/logrotate.d/llm-servers << 'EOF'
+/var/log/ollama/stderr.log /var/log/ollama/stdout.log {
+    size 100M
+    rotate 5
+    compress
+    copytruncate
+    missingok
+    notifempty
+    create 644 _llmserver wheel
+}
+EOF
+
+# 4. Test the config (dry-run, no rotation)
+sudo /opt/homebrew/opt/logrotate/sbin/logrotate -d /etc/logrotate.d/llm-servers
+
+# 5. Create the LaunchDaemon plist
+sudo tee /Library/LaunchDaemons/com.llm-server.logrotate.plist > /dev/null << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.llm-server.logrotate</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/opt/logrotate/sbin/logrotate</string>
+        <string>-s</string>
+        <string>/var/log/mac-llm-setup/logrotate.status</string>
+        <string>/etc/logrotate.d/llm-servers</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/var/log/mac-llm-setup/logrotate-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/mac-llm-setup/logrotate-stderr.log</string>
+</dict>
+</plist>
+EOF
+
+# 6. Set permissions and load
+sudo chown root:wheel /Library/LaunchDaemons/com.llm-server.logrotate.plist
+sudo chmod 644 /Library/LaunchDaemons/com.llm-server.logrotate.plist
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.llm-server.logrotate.plist
+
+# 7. Force an initial rotation to baseline logs before the next run
+sudo /opt/homebrew/opt/logrotate/sbin/logrotate -f \
+    -s /var/log/mac-llm-setup/logrotate.status \
+    /etc/logrotate.d/llm-servers
 ```
-/var/log/ollama/stderr.log  root:wheel  644  5  102400  *  JG
-/var/log/ollama/stdout.log  root:wheel  644  3  10240   *  JG
-```
 
-Columns: path · owner:group · mode · copies to keep · rotate at KB ·
-schedule (`*` = daily) · flags (`J`=bzip2 compress, `G`=send signal on
-rotation). At 100 MB per file with 5 copies, maximum stderr storage is ~500 MB.
+The plist fires at 2 AM daily (`RunAtLoad = false` — does not rotate on boot).
+State is tracked at `/var/log/mac-llm-setup/logrotate.status`, which is in the
+existing pipeline log directory. stdout/stderr from the rotation job go to
+`/var/log/mac-llm-setup/logrotate-stdout.log` and `logrotate-stderr.log` for
+debugging.
 
-**Scope:** `internal/ops/tools.go` (plist generation + newsyslog file write)
-+ `config.json` (optional `log_level` key under `tools.ollama`).
+At 100 MB per file with 5 copies, maximum stderr storage is ~500 MB.
+
+**Scope:** `internal/ops/tools.go` (write `/etc/logrotate.d/llm-servers` and
+install plist during Install Tools) + `internal/ops/restore.go` (remove both
+on restore) + `config.json` (optional `log_level` key under `tools.ollama`).
 
 ---
 
@@ -130,30 +257,54 @@ StandardOutPath  →  /var/log/exo/stdout.log
 StandardErrorPath →  /var/log/exo/stderr.log
 ```
 
-**Fix — Part C: newsyslog rotation for all tools**
+**Fix — Part C: logrotate rotation for all tools**
 
-Create `/etc/newsyslog.d/llm-servers.conf` during Install Tools covering all
-enabled serving tools:
+Use **logrotate** (not newsyslog) with `copytruncate`. See Item 2 Part B for
+the full rationale — newsyslog's rename approach leaves all launchd-managed
+daemons writing to the old inode after rotation. Confirmed broken on doppio-1.
+
+Extend `/etc/logrotate.d/llm-servers` to cover all enabled serving tools:
 
 ```
-/var/log/ollama/stderr.log      root:wheel  644  5  102400  *  JG
-/var/log/ollama/stdout.log      root:wheel  644  3  10240   *  JG
-/var/log/rapid-mlx/stderr.log   root:wheel  644  5  102400  *  JG
-/var/log/rapid-mlx/stdout.log   root:wheel  644  3  10240   *  JG
-/var/log/mlx-lm/stderr.log      root:wheel  644  5  102400  *  JG
-/var/log/mlx-lm/stdout.log      root:wheel  644  3  10240   *  JG
-/var/log/infinity/stderr.log    root:wheel  644  5  102400  *  JG
-/var/log/infinity/stdout.log    root:wheel  644  3  10240   *  JG
-/var/log/exo/stderr.log         root:wheel  644  5  102400  *  JG
-/var/log/exo/stdout.log         root:wheel  644  3  10240   *  JG
+/var/log/ollama/stderr.log
+/var/log/ollama/stdout.log
+/var/log/rapid-mlx/stderr.log
+/var/log/rapid-mlx/stdout.log
+/var/log/mlx-lm/stderr.log
+/var/log/mlx-lm/stdout.log
+/var/log/infinity/stderr.log
+/var/log/infinity/stdout.log
+/var/log/exo/stderr.log
+/var/log/exo/stdout.log
+{
+    size 100M
+    rotate 5
+    compress
+    copytruncate
+    missingok
+    notifempty
+    create 644 _llmserver wheel
+}
 ```
 
-Rotation at 100 MB, 5 copies = max ~500 MB stderr per tool. The newsyslog
-conf file should be removed by the restore ops.
+The `com.llm-server.logrotate` LaunchDaemon (from Item 2 Part B) covers all
+tools from a single plist — no additional daemon needed.
+
+**Prerequisites before writing the config:**
+- `sudo mkdir -p /etc/logrotate.d` — this directory does not exist by default
+  on macOS and must be created explicitly
+- Log directories for each tool must exist and be owned `_llmserver:wheel`
+  before the daemon first starts
+- Config file must be written with `sudo tee` so it is root-owned; logrotate
+  refuses to read config files not owned by root when running as root
+
+Rotation at 100 MB, 5 copies = max ~500 MB stderr per tool.
 
 **Scope:** `internal/ops/tools.go` — all four `*Plist()` functions + log
-directory creation for Exo. `internal/ops/restore.go` — remove
-`/etc/newsyslog.d/llm-servers.conf` on restore.
+directory creation for Exo + write `/etc/logrotate.d/llm-servers` and install
+`com.llm-server.logrotate` plist during Install Tools.
+`internal/ops/restore.go` — remove `/etc/logrotate.d/llm-servers` and bootout
+`com.llm-server.logrotate` on restore.
 
 ---
 
@@ -161,8 +312,8 @@ directory creation for Exo. `internal/ops/restore.go` — remove
 
 - Items 1 and 2 are related and should be implemented together in the same
   phase — both touch the Ollama plist generation in the ops layer.
-- newsyslog config should be added to `restore.sh` / the restore ops so it
-  is cleaned up on restore.
+- The logrotate config and `com.llm-server.logrotate` plist must be added to
+  the restore ops so they are cleaned up on restore.
 - The `OLLAMA_MODELS` resolved-path logic applies only when
   `storage.use_external_volume` is `true`. When using internal storage the
   default Ollama path should be left unchanged.
@@ -327,3 +478,185 @@ optionally `internal/ops/tools.go` (tuning adjustment).
 - Each suppressed service needs a corresponding `[PASS]/[WARN]` check in
   `verify.go` confirming it is not running.
 - Item 8 (Docker) is precheck-only — headless-macs should warn, not act.
+
+---
+
+## Hardware Telemetry — macmon Integration
+
+### 11. Install macmon as a root-level (system) daemon for CPU/GPU/ANE/thermal telemetry
+
+**What it is:** [`macmon`](https://github.com/vladkens/macmon) is a Rust
+tool that reads CPU/GPU/ANE power draw, per-cluster core frequency and
+utilization, temperatures, fan RPM, and memory/swap stats on Apple Silicon.
+It reads this through a private macOS API (the same data `powermetrics`
+exposes) and — notably — **does not require root**, unlike `powermetrics`,
+`pumas`, or `mactop`. It ships three relevant modes:
+
+- `macmon pipe` — one-shot/streaming JSON output
+- `macmon serve` — HTTP server exposing `GET /json` (snapshot) and
+  `GET /metrics` (Prometheus text format)
+- interactive TUI (not relevant for a headless daemon)
+
+This would give `RunVerify`/`RunPrecheck` and any future observability work
+(Grafana/Prometheus, see Item 12) real thermal/power telemetry that the
+project currently has no source for — useful for confirming an inference
+node isn't throttling under sustained load.
+
+**The packaged install method doesn't fit this project's daemon model.**
+Upstream ships `macmon serve --install`, which writes a **LaunchAgent** to
+`~/Library/LaunchAgents/com.macmon.plist` — a per-user, login-session-scoped
+service (Aqua/WindowServer bootstrap domain), auto-started at login. This
+assumes an interactively-used Mac with a logged-in user, and needs no root
+because LaunchAgents install without `sudo`.
+
+This is the opposite of how every other service in this project runs.
+`headless-macs` boxes are unattended: there is no guaranteed interactive
+login session (see the auto-login gotcha in the "Known non-obvious
+constraints" section of `CLAUDE.md`), and every serving daemon here is a
+**system LaunchDaemon** running as the `_llmserver` service account, not a
+per-user LaunchAgent. Using `macmon serve --install` as-is would silently
+stop reporting the moment the box reboots without an active login session —
+exactly the failure mode this project is designed to avoid.
+
+**Confirmed on doppio-1 (2026-09-05):** macmon's telemetry access does *not*
+require a GUI/Aqua session. A throwaway `com.llm-server.macmontest` system
+LaunchDaemon, `UserName _llmserver`, `bootstrap system`, was tested with no
+active console session:
+
+```bash
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.llm-server.macmontest.plist
+```
+
+`stdout.log` returned real non-zero telemetry (`cpu_power: 0.0134`,
+`sys_power: 8.57`, `cpu_temp_avg: 36.95`, live memory figures) with an empty
+`stderr.log` — no panic, no permission error. IOReport access works from the
+system bootstrap domain, running unprivileged, with nobody logged into the
+console. The fallback path below (documenting this as a limitation) does
+not apply — proceed with the LaunchDaemon implementation.
+
+Write our own `com.llm-server.macmon` LaunchDaemon following the existing
+infrastructure-daemon conventions in this file (write-once idempotent, not
+tool-config-driven like the serving-tool daemons) — do **not** shell out to
+`macmon serve --install`, since that writes to a path and domain this
+project doesn't manage or clean up on Restore.
+
+- Run as `_llmserver` (`UserName` key), not root — macmon needs no elevated
+  privilege, and running a telemetry reader as root would be an unnecessary
+  privilege escalation the rest of this project deliberately avoids.
+- `HOME` still required in `EnvironmentVariables` per the standard daemon
+  template (same panic risk as Ollama/mlx-lm if omitted — untested for
+  macmon specifically, but cheap to include defensively).
+- Log to `/var/log/macmon/{stdout,stderr}.log`, owned `_llmserver:wheel`,
+  created before the plist is written (same pattern as every other tool).
+- New config block:
+  ```json
+  "tools": {
+    "macmon": {
+      "enabled": false,
+      "port": 9090,
+      "interval_ms": 1000
+    }
+  }
+  ```
+- Add a MACMON section to `verify.go` with `check_http "macmon" "http://127.0.0.1:9090/json" "cpu_power"`.
+- Add bootout + plist removal to `restore.go`.
+
+**Confirmed working `ProgramArguments` on doppio-1 (macmon via `brew install
+macmon`, 2026-09-05):**
+
+```xml
+<key>ProgramArguments</key>
+<array>
+    <string>/opt/homebrew/bin/macmon</string>
+    <string>serve</string>
+    <string>-p</string>
+    <string>9090</string>
+    <string>-i</string>
+    <string>1000</string>
+</array>
+```
+
+Verified: `state = running` under `_llmserver` with no console session,
+`GET /json` returns real telemetry including `soc` chip info (cores, GPU
+core count, frequency tables), and the port is reachable both on
+`127.0.0.1` and the machine's LAN interface.
+
+**`network.localhost_only` honoring needs a different approach than every
+other tool.** The installed `macmon serve --help` on doppio-1 has **no
+`--host`/`--bind` flag at all** — only `-p`/`--port` and `-i`/`--interval`.
+(The upstream README documents `--host`, e.g. `macmon serve --host
+127.0.0.1`, but the currently-brewed build doesn't expose it — a version gap
+that needs re-checking at implementation time; `macmon --version` /
+`brew info macmon` should be checked against the installed version before
+assuming either flag exists.) Unlike Ollama/mlx-lm/Infinity, where
+`install-tools.sh` sets a `host` field per config, macmon on this build
+**always binds all interfaces** — confirmed by curling it from the LAN IP
+in addition to loopback. If `network.localhost_only` is true and the
+installed macmon version still lacks `--host`, binding restriction has to
+happen at the network layer (a `pf` rule blocking non-loopback access to
+9090, applied/removed alongside the daemon) rather than via a CLI flag —
+or the ops layer should pin/require a macmon version new enough to support
+`--host` if that check is cheap to add to `installMacmon()`.
+
+**Scope:** `internal/ops/tools.go` (new `installMacmon()` + `macmonPlist()`),
+`internal/ops/verify.go` (MACMON section), `internal/ops/restore.go`
+(bootout `com.llm-server.macmon` + remove plist + remove `/var/log/macmon`),
+`config.json` (new `tools.macmon` block). Per the Planning convention in
+`CLAUDE.md`, this needs its own `PHASE_N_PLAN.md` before implementation — it
+touches more than 2 files. The feasibility question is resolved; what's left
+is normal implementation work.
+
+---
+
+## Security — Unauthenticated, Unencrypted Serving Endpoints
+
+### 12. No TLS or authentication in front of any serving-tool daemon
+
+**Problem (quick assessment, not a full design):** Every serving daemon this
+project installs — Ollama, Rapid-MLX, mlx-lm, Infinity, Exo, and the
+proposed macmon HTTP server above — binds plain HTTP with no authentication.
+`network.localhost_only` controls *what interface* a tool binds to, but it
+is not a security boundary once an operator legitimately sets it to `false`
+for multi-machine inference (the documented, intended use case for a
+dedicated inference node). At that point:
+
+- Anyone who can reach the port can submit inference requests and consume
+  compute, with no rate limiting or accounting.
+- Ollama's HTTP API is not read-only — `/api/pull`, `/api/push`, and
+  `/api/delete` allow an unauthenticated caller to download arbitrary models
+  (disk/bandwidth exhaustion) or delete installed ones.
+- Nothing is encrypted in transit — request/response bodies (prompts,
+  completions) cross the network in cleartext, including on shared or
+  untrusted LANs.
+- None of Ollama, Rapid-MLX, mlx-lm, or Infinity have built-in auth or TLS
+  support to turn on — this has to be solved outside the tool.
+
+**Note on doppio-1:** the manually-installed `com.llm-server.macmon` daemon
+(Item 11 dogfooding) is intentionally bound to `0.0.0.0:9090` with no
+auth — a deliberate, temporary development-stage choice, not the intended
+production posture. When Item 12 lands, macmon should move to loopback-only
+with the rest of the serving tools, fronted by the same gateway.
+
+**Direction (for a future phase, not sized yet):** The common fix for
+"multiple backend services, none of which speak TLS or auth" is a reverse
+proxy in front of them, terminating TLS and enforcing an API key or basic
+auth, rather than patching each tool individually. A lightweight option
+(e.g. Caddy, which does automatic TLS and has trivial config) run as its
+own `com.llm-server.proxy`-style LaunchDaemon, with the underlying tools
+force-bound to `127.0.0.1` regardless of `network.localhost_only` (the proxy
+becomes the only listener on a non-loopback interface). This would need:
+
+- A new `network.require_auth` / `network.tls` section in `config.json`.
+- A decision on credential storage/rotation (a static API key is simplest
+  but weakest; needs to not land in shell history or world-readable config).
+- Changes to `install-tools.sh`'s / the Go ops layer's interpretation of
+  `localhost_only` — today it sets each tool's own bind host; it would need
+  to instead always force loopback and let the proxy own the external bind.
+- A corresponding `verify.go` check that the proxy, not the raw tool port,
+  is what's reachable from a non-loopback interface.
+
+**Scope:** Not yet sized — this is flagged for design, not implementation.
+Per the Planning convention, this needs a `PHASE_N_PLAN.md` with its own
+scope decision table before any code is written. Candidate for Phase 8.
+
+---

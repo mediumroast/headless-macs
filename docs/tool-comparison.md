@@ -90,6 +90,13 @@ Rapid-MLX retains meaningful advantages in serving sophistication over Ollama 0.
 - Model aliases (`rapid-mlx models`) don't cover every HF model — use mlx-lm for those
 - First `serve` downloads the model — API unavailable until download completes
 - Vision/audio require extras: `pip install 'rapid-mlx[vision]'`
+- **Holds its model resident in unified memory for as long as the daemon
+  runs, regardless of request activity** — confirmed ~20–25GB continuously
+  consumed on doppio-1 with qwen3-aftertaste-fused. If you also run Ollama
+  on the same node, account for this footprint when tuning Ollama's
+  `MAX_LOADED_MODELS`, or the node can be overcommitted. `headless-macs`
+  precheck warns when both are enabled together, but does not currently
+  adjust Ollama's tuning for you.
 
 **When to choose Rapid-MLX**
 - Primary use case is a coding agent (Claude Code, Cursor, Aider, Continue)

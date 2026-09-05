@@ -184,6 +184,24 @@ func (r *RestoreResult) sectionRestorePmset() {
 func (r *RestoreResult) sectionRestoreServices() {
 	sec := "SERVICES"
 
+	// Explicit floor for Phase 8's five suppressions (phase8Suppressions,
+	// shared with baseline.go — see there for why), independent of the
+	// snapshot-based restore below. The snapshot only captures the
+	// disable-override state at whatever moment the *most recent* Baseline
+	// run started — if an earlier Baseline run already suppressed these
+	// before that snapshot was taken, the snapshot would show them as
+	// already-disabled and the generic restore below would (correctly, by
+	// its own logic, but not what we want here) leave them alone.
+	// Re-enabling an already-enabled service is a harmless no-op.
+	for _, svc := range phase8Suppressions {
+		domain := "system/" + svc.Label
+		if exec.Command("launchctl", "enable", domain).Run() == nil {
+			r.add(sec, ActionSet, "Re-enabled: "+domain, "")
+		} else {
+			r.add(sec, ActionSkip, domain+" (may not exist on this macOS version)", "")
+		}
+	}
+
 	snapshotDir := "/var/log/mac-llm-setup/snapshots"
 	entries, err := os.ReadDir(snapshotDir)
 	if err != nil {

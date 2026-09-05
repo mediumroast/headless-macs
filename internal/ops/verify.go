@@ -382,7 +382,31 @@ func (r *VerifyResult) sectionSystem(cfg *config.Config, sipEnabled bool) {
 		}
 	}
 
+	// Phase 8 service suppression — confirm each is actually not running.
+	// Uses the same phase8Suppressions list baseline.go suppresses from and
+	// restore.go re-enables from, so this check can't drift out of sync
+	// with either side. [WARN], not [FAIL]: matches the [SKIP-SIP]
+	// semantics from Baseline — a service SIP is preventing persistent
+	// suppression for isn't this project's fault, and isn't severe enough
+	// to fail Verify outright.
+	for _, svc := range phase8Suppressions {
+		r.checkServiceSuppressed(sec, svc.Label)
+	}
+
 	_ = sipEnabled // used in log header
+}
+
+// checkServiceSuppressed confirms a background service Baseline suppresses
+// (Phase 8) is not currently running. Unlike checkDaemon, "not running" —
+// including "no such service at all" — is the pass condition here.
+func (r *VerifyResult) checkServiceSuppressed(section, label string) {
+	out, _ := exec.Command("launchctl", "print", "system/"+label).Output()
+	if strings.Contains(string(out), "state = running") {
+		r.warn(section, label+" still running — Baseline suppression not applied or was reverted",
+			"Fix: sudo headless-macs baseline")
+		return
+	}
+	r.pass(section, label+" not running", "")
 }
 
 // ---------------------------------------------------------------------------

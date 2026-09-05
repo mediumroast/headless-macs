@@ -527,6 +527,44 @@ func (r *BaselineResult) sectionServices(cfg *config.Config, sipEnabled bool) {
 		_ = runCmd("tmutil", "addexclusion", "/Library/Ollama")
 		r.add(sec, ActionSet, "Time Machine disabled; /Library/Ollama excluded", "")
 	}
+
+	// Phase 8: suppress five more services with no purpose on a headless
+	// inference node. See phase8Suppressions for the list and rationale —
+	// shared with sectionRestoreServices() and Verify's checkServiceSuppressed
+	// so the suppress/restore lists can never drift apart.
+	for _, svc := range phase8Suppressions {
+		r.disableService(sec, "system/"+svc.Label, sipEnabled)
+		if svc.Plist != "" {
+			_ = runCmd("launchctl", "bootout", "system", svc.Plist)
+		}
+	}
+}
+
+// phase8Suppressions is the single source of truth for the five services
+// Phase 8 suppresses — used here to suppress them, in restore.go to
+// re-enable them, and in verify.go to confirm they're not running. One
+// shared list means the suppress and restore sides can never drift apart
+// across a release, which would otherwise leave a box in a state neither
+// Baseline nor Restore's own Verify checks fully recognize.
+var phase8Suppressions = []struct {
+	Label string // launchd label, without the "system/" domain prefix
+	Plist string // system plist to bootout immediately; "" if not needed
+}{
+	// Content Caching — macOS's LAN proxy for Apple software downloads;
+	// no value on an inference node, unnecessary disk/network I/O.
+	{"com.apple.AssetCache.builtin", "/System/Library/LaunchDaemons/com.apple.AssetCache.builtin.plist"},
+	// mobileassetd — downloads/manages iPhone/iPad firmware assets and
+	// carrier bundles; largest unnecessary process by RSS on doppio-1.
+	{"com.apple.MobileAssetUpdater", "/System/Library/LaunchDaemons/com.apple.MobileAssetUpdater.plist"},
+	// Audio stack — no speakers, microphone, or audio use case headless;
+	// generates periodic CPU wakeups.
+	{"com.apple.audio.coreaudiod", ""},
+	{"com.apple.audiomxd", ""},
+	// Find My beaconing — periodically broadcasts location to Apple's Find
+	// My network; no value on a rack/desk inference node.
+	{"com.apple.findmybeaconingd", "/System/Library/LaunchDaemons/com.apple.findmybeaconingd.plist"},
+	// AirPlay receiver/sender helper — not needed headless.
+	{"com.apple.AirPlayXPCHelper", ""},
 }
 
 // ---------------------------------------------------------------------------

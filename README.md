@@ -98,6 +98,14 @@ Enable tools through the **Edit Config** screen (`c` from the menu), or by editi
 
 See [`docs/tool-comparison.md`](docs/tool-comparison.md) for a full comparison.
 
+> **Rapid-MLX memory:** once started, Rapid-MLX holds its full model
+> resident in unified memory for as long as the daemon runs, regardless of
+> request activity (~20–25GB observed with a mid-size model). Running it
+> alongside Ollama means accounting for that footprint when tuning
+> Ollama's `MAX_LOADED_MODELS` — Precheck warns when both are enabled, but
+> does not adjust the tuning for you. See `docs/tool-comparison.md` for
+> details.
+
 > **Network defaults:** Services bind to `localhost` (`127.0.0.1`) by default and the firewall is left enabled. Set `"localhost_only": false` to allow LAN clients. If you run unsigned Python services (Rapid-MLX, mlx-lm, Infinity) and cannot manage per-app firewall rules, also set `"disable_firewall": true` — only do this on an isolated trusted network.
 
 ---

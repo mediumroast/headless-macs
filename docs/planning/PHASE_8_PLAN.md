@@ -1,5 +1,14 @@
 # PHASE 8 PLAN — Unnecessary Service Suppression
 
+**Status: 8A–8F all implemented, build/vet/test clean.** One item remains
+that can't be done from here: sanity-checking on real hardware (doppio-1)
+that none of the five suppressed services were secretly load-bearing for
+serving-tool behavior. Implementation deviated from the plan's literal
+wording in one place — see Phase 8A — by using a single shared
+`phase8Suppressions` list across suppress/restore/verify instead of three
+independently hardcoded copies, which resolves Phase 8F's open question
+about list drift more strongly than the test it proposed.
+
 ## Intent
 
 Suppress macOS background services that have no purpose on a headless LLM
@@ -47,7 +56,7 @@ there — this phase adds five more).
 **Goal:** Five more services suppressed via System Baseline, matching the
 existing pattern exactly.
 
-- [ ] In `sectionServices()` (`internal/ops/baseline.go`), add:
+- [x] In `sectionServices()` (`internal/ops/baseline.go`), added:
   - `com.apple.AssetCache.builtin` (+ bootout of
     `/System/Library/LaunchDaemons/com.apple.AssetCache.builtin.plist`)
   - `com.apple.MobileAssetUpdater` (+ bootout of its plist)
@@ -55,12 +64,23 @@ existing pattern exactly.
   - `com.apple.audiomxd`
   - `com.apple.findmybeaconingd` (+ bootout of its plist)
   - `com.apple.AirPlayXPCHelper`
-- [ ] Each uses the existing `disableService(section, domain, sipEnabled)`
+- [x] Each uses the existing `disableService(section, domain, sipEnabled)`
       helper — no new helper needed
+- [x] **Design change from the original plan wording:** rather than
+      hardcoding this list separately in `baseline.go`, `restore.go`, and
+      `verify.go` (which is exactly the drift risk Phase 8F's open
+      question worried about and considered solving with a test), the
+      five suppressions live in one shared `phase8Suppressions` var
+      (`baseline.go`) — a `{Label, Plist}` pair per service, with the
+      rationale as an inline comment per entry. `sectionServices()`,
+      `sectionRestoreServices()` (restore.go), and the new
+      `checkServiceSuppressed` loop (verify.go) all range over the same
+      slice. This makes drift structurally impossible rather than
+      detected after the fact — stronger than the test Phase 8F proposed,
+      so no separate test was added; see Phase 8F below.
 - [ ] Confirm none of these are dependencies of something inference-relevant
-      before merging (e.g., `coreaudiod` should have zero effect on serving
-      tools — sanity-check on doppio-1 after suppression that Ollama/etc.
-      still serve requests normally)
+      — **not done**, needs a real box (doppio-1): sanity-check after
+      suppression that Ollama/etc. still serve requests normally.
 
 **Files touched:** `internal/ops/baseline.go`
 
@@ -69,11 +89,12 @@ existing pattern exactly.
 ### Phase 8B — Verify checks
 **Goal:** `verify.go` confirms each suppressed service is actually down.
 
-- [ ] Add a `[PASS]`/`[WARN]` check per service in the relevant `sectionSystem()`
-      (or a new `sectionServices()` in verify, mirroring baseline's naming)
-      confirming the service is not running via `launchctl print`
-- [ ] `[WARN]`, not `[FAIL]`, when SIP prevents persistence — matches the
-      `[SKIP-SIP]` semantics from Baseline
+- [x] Added a `[PASS]`/`[WARN]` check per service in `sectionSystem()`
+      (new `checkServiceSuppressed(section, label)` helper, "not running"
+      is the pass condition — including "no such service found at all")
+      via `launchctl print`, iterating the shared `phase8Suppressions` list
+- [x] `[WARN]`, not `[FAIL]`, matching the `[SKIP-SIP]` semantics from
+      Baseline
 
 **Files touched:** `internal/ops/verify.go`
 
@@ -82,14 +103,14 @@ existing pattern exactly.
 ### Phase 8C — Precheck warnings
 **Goal:** Flag two conditions this project should warn about but not act on.
 
-- [ ] Detect `/Library/LaunchDaemons/com.docker.vmnetd.plist`; if present,
+- [x] New `checkAdvisories(cfg)` section (`ADVISORY`): detects
+      `/Library/LaunchDaemons/com.docker.vmnetd.plist`; if present,
       `[WARN]`: `"Docker vmnetd detected — remove Docker if not required on
       this inference node"`
-- [ ] When `tools.rapid_mlx.enabled` and `tools.ollama.enabled` are both
-      `true`, `[WARN]`: Rapid-MLX holds its model resident in unified memory
-      continuously (confirmed ~20–25 GB on doppio-1 with
-      qwen3-aftertaste-fused); operator should account for this when tuning
-      Ollama's `MAX_LOADED_MODELS`
+- [x] Same function: when `tools.rapid_mlx.enabled` and `tools.ollama.enabled`
+      are both `true`, `[WARN]`: Rapid-MLX holds its model resident in
+      unified memory continuously; operator should account for this when
+      tuning Ollama's `MAX_LOADED_MODELS`
 
 **Files touched:** `internal/ops/precheck.go`
 
@@ -99,10 +120,11 @@ existing pattern exactly.
 **Goal:** Make Rapid-MLX's always-resident memory model discoverable outside
 the precheck warning.
 
-- [ ] Add a note to `docs/tool-comparison.md` under Rapid-MLX's entry
-      explaining the always-resident memory model and its interaction with
-      Ollama's `MAX_LOADED_MODELS`
-- [ ] Add the same note to `README.md` wherever Rapid-MLX is introduced
+- [x] Added a note to `docs/tool-comparison.md` under Rapid-MLX's
+      Weaknesses, explaining the always-resident memory model and its
+      interaction with Ollama's `MAX_LOADED_MODELS`
+- [x] Added a matching blockquote note to `README.md`'s Tool Selection
+      section, next to the existing Network Defaults note
 
 **Files touched:** `docs/tool-comparison.md`, `README.md`
 
@@ -111,10 +133,18 @@ the precheck warning.
 ### Phase 8E — Restore
 **Goal:** `restore` re-enables everything this phase suppresses.
 
-- [ ] In `sectionRestoreServices()` (`internal/ops/restore.go`), re-enable
-      the same five service domains suppressed in Phase 8A (mirrors how the
-      existing suppressed services — Spotlight, iCloud, Siri, etc. — are
-      already restored)
+- [x] In `sectionRestoreServices()` (`internal/ops/restore.go`), re-enable
+      the same five service domains suppressed in Phase 8A — added as an
+      explicit floor (iterating the shared `phase8Suppressions` list)
+      running before the existing generic snapshot-based restore, not as a
+      replacement for it. Reason: the snapshot only captures the
+      disable-override state at whatever moment the *most recent* Baseline
+      run started; if an earlier Baseline run already suppressed these
+      before that snapshot was taken, the snapshot would show them as
+      already-disabled, and the generic snapshot restore would (correctly
+      by its own logic, but not what's wanted here) leave them alone.
+      Re-enabling an already-enabled service is a harmless no-op, so the
+      explicit floor and the generic restore can't conflict.
 
 **Files touched:** `internal/ops/restore.go`
 
@@ -134,31 +164,23 @@ no-ops either way. There is nothing here that "exists so it gets skipped
 forever," because there's no artifact of ours to check for existence in
 the first place.
 
-- [ ] **Remediation path: re-run `sudo headless-macs baseline`.** No code
-      change needed for this phase's own suppressions to reach an existing
-      box — confirm this is explicitly documented wherever Phase 8 gets
-      written up (README/CHANGELOG), so it's not assumed operators already
-      know System Baseline is safe/expected to re-run.
-- [ ] Precheck's two new warnings (Docker vmnetd, Rapid-MLX+Ollama memory)
-      are evaluated fresh on every Precheck run — nothing is stored, so
-      there's no "stale check" risk; upgrading the binary alone is
-      sufficient for these two, no re-run of anything else required.
-- [ ] **The one real risk: `sectionRestoreServices()`'s re-enable list and
-      `sectionServices()`'s suppression list must ship as a single unit.**
-      If an operator runs `Baseline` under this phase's new binary (five
-      services suppressed) but later runs `Restore` under an *older* binary
-      that doesn't know about those five domains, Restore will not
-      re-enable them, leaving the box in a state neither version's Verify
-      fully recognizes. This is a general risk for any phase that pairs a
-      new suppression with its undo, not unique to Phase 8 — but worth
-      stating here since it's the first phase since Phase 6 to extend that
-      pairing. Mitigation is procedural, not code: never let Baseline's
-      suppression list and Restore's re-enable list diverge across a
-      release boundary — land and tag them together, per
-      `docs/RELEASE_STRATEGY.md`'s versioning rules.
+- [x] **Remediation path: re-run `sudo headless-macs baseline`.** No
+      migration code needed — documented in CHANGELOG.md.
+- [x] Confirmed Precheck's two new warnings need no remediation
+      consideration — evaluated fresh on every run, nothing stored.
+- [x] **The cross-version drift risk is now structurally closed, not just
+      documented.** The plan's original concern — Baseline's suppression
+      list and Restore's re-enable list shipping as two independently
+      hardcoded lists that could drift apart across a release — is
+      resolved by Phase 8A's `phase8Suppressions` refactor: there is only
+      one list, used by both sides (and Verify), so there is nothing left
+      to drift. This supersedes the "add a test asserting the two lists
+      match" idea from the Open Questions below — a single shared list is
+      stronger than a test that checks two copies agree, since it removes
+      the second copy entirely.
 
-**Files touched:** none beyond 8A–8E — this section is a design
-confirmation, not new implementation work.
+**Files touched:** covered by 8A's `phase8Suppressions` refactor — no
+separate remediation code was needed once that existed.
 
 ---
 
@@ -166,12 +188,13 @@ confirmation, not new implementation work.
 
 | File | Change |
 |---|---|
-| `internal/ops/baseline.go` | Five new service suppressions in `sectionServices()` |
-| `internal/ops/verify.go` | Checks confirming each suppressed service is not running |
-| `internal/ops/precheck.go` | Docker vmnetd warning, Rapid-MLX+Ollama concurrent-memory warning |
-| `internal/ops/restore.go` | Re-enable the five services in `sectionRestoreServices()` |
+| `internal/ops/baseline.go` | Five new service suppressions via shared `phase8Suppressions` list in `sectionServices()` |
+| `internal/ops/verify.go` | `checkServiceSuppressed()` + `[PASS]`/`[WARN]` per service, iterating `phase8Suppressions` |
+| `internal/ops/precheck.go` | New `checkAdvisories()`: Docker vmnetd warning, Rapid-MLX+Ollama concurrent-memory warning |
+| `internal/ops/restore.go` | Explicit re-enable floor iterating `phase8Suppressions`, ahead of the existing generic snapshot restore |
 | `docs/tool-comparison.md` | Rapid-MLX always-resident memory note |
-| `README.md` | Same note, in the Rapid-MLX section; remediation instruction for existing installs |
+| `README.md` | Same note as a blockquote in Tool Selection |
+| `CHANGELOG.md` | Remediation instruction for existing installs (re-run Baseline) |
 
 ---
 
@@ -196,10 +219,6 @@ Baseline will take, which is exactly what Precheck is for.
 - None outstanding on the original scope — FUTURES.md's own notes on these
   items ("Items 3–7 belong in the same phase," "Item 8 is precheck-only,"
   "Item 9 is warn + doc note") already resolve the shape of this phase.
-- **(Phase 8F)** Is a procedural release-process note enough to prevent
-  Baseline/Restore suppression-list drift, or does this project want an
-  automated check (e.g., a test asserting every domain in
-  `sectionServices()`'s suppression list has a matching entry in
-  `sectionRestoreServices()`'s re-enable list)? Leaning toward adding that
-  test cheaply whenever Phase 8 is implemented, rather than relying on
-  process alone.
+- **(Phase 8F) Resolved during implementation:** the shared
+  `phase8Suppressions` list closes this structurally — see Phase 8A and
+  8F above. No test needed; there's nothing left that could drift.

@@ -11,7 +11,8 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 _Changes on the current branch not yet merged to main._
 
-Phase 7: serving-tool log management.
+Phase 7: serving-tool log management. Phase 8: unnecessary service
+suppression.
 
 ### Fixed
 
@@ -57,6 +58,20 @@ Phase 7: serving-tool log management.
 
 ### Added
 
+- **Five more background services suppressed** on System Baseline: LAN
+  Content Caching (`com.apple.AssetCache.builtin`), `mobileassetd`
+  (largest unnecessary process by RSS observed on doppio-1), the audio
+  stack (`coreaudiod`/`audiomxd` — no speakers/mic/audio use case
+  headless), Find My beaconing, and the AirPlay receiver/sender helper.
+  Same SIP-gated pattern as the existing Spotlight/iCloud/Siri
+  suppressions; a single shared list (`phase8Suppressions`) drives
+  suppression, Restore's re-enable, and Verify's health check, so the
+  three can't drift out of sync with each other
+- **Precheck advisories**: warns when Docker's `com.docker.vmnetd` is
+  detected (headless-macs didn't install it and won't remove it, but flags
+  it), and when Rapid-MLX and Ollama are both enabled (Rapid-MLX holds its
+  model resident in memory continuously — see the new note in
+  `docs/tool-comparison.md` and `README.md`)
 - **`tools.ollama.log_level`** config key (default `warn`) — sets
   `OLLAMA_LOG_LEVEL` in the daemon's environment to cut Ollama's own request/
   model-loading log noise
@@ -70,8 +85,10 @@ Phase 7: serving-tool log management.
   launchd-managed daemons' open file descriptors on rotation)
 - New Verify checks: Ollama's `OLLAMA_MODELS`/`OLLAMA_LOG_LEVEL` state, Exo's
   log location + plist flag sanity + `EXO_HOME`, the logrotate daemon's
-  presence *and* config content, and `--log-level` presence for
-  mlx-lm/Infinity/Rapid-MLX (previously only Ollama and Exo had this)
+  presence *and* config content, `--log-level` presence for
+  mlx-lm/Infinity/Rapid-MLX (previously only Ollama and Exo had this), and
+  a `[PASS]`/`[WARN]` per Phase 8 suppressed service confirming it's
+  actually not running
 - Restore now removes the logrotate daemon and config
 - **Precheck now flags stale/unrecognized `config.json` keys** — derives
   the set of valid keys from the `Config` struct itself, so a renamed or
@@ -85,6 +102,18 @@ Phase 7: serving-tool log management.
   **`tools.exo.bootstrap_peers`** (array of strings) — the former mapped to
   a `--discovery-module` flag that never existed in exo's CLI, so no
   working config could have depended on it
+
+### Upgrading an existing install
+
+Both phases above are picked up automatically the next time their
+respective command runs — there is no separate migration step:
+
+- **Phase 7's fixes** (Ollama, Exo, mlx-lm/Infinity/Rapid-MLX logging, the
+  shared logrotate daemon): re-run `sudo headless-macs install-tools`.
+- **Phase 8's suppressions**: re-run `sudo headless-macs baseline`.
+
+Run `sudo headless-macs verify` afterward to confirm — its `[WARN]`/`[FAIL]`
+messages name the exact command to fix whatever they flag.
 
 ---
 

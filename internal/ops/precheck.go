@@ -96,6 +96,7 @@ func RunPrecheck(cfg *config.Config) (*PrecheckResult, error) {
 	r.checkNetwork(cfg)
 	r.checkStorage(cfg)
 	r.checkPower()
+	r.checkAdvisories(cfg)
 	r.checkConfigKeys()
 	r.finalise()
 
@@ -551,6 +552,33 @@ func (r *PrecheckResult) checkPower() {
 				r.info("POWER", fmt.Sprintf("pmset %s=%s (setup.sh will set to %s)", key, val, expected))
 			}
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Section: Advisories (informational — headless-macs shouldn't act on these directly)
+// ---------------------------------------------------------------------------
+
+// checkAdvisories flags two conditions worth an operator's attention that
+// this project should not automate a fix for: third-party software it
+// didn't install (Docker), and a config combination that's valid but has a
+// resource-planning implication (Rapid-MLX's memory footprint).
+func (r *PrecheckResult) checkAdvisories(cfg *config.Config) {
+	// Docker's privileged networking helper — headless-macs did not install
+	// Docker and should not uninstall third-party software; detection only.
+	if _, err := os.Stat("/Library/LaunchDaemons/com.docker.vmnetd.plist"); err == nil {
+		r.warn("ADVISORY", "Docker vmnetd detected — remove Docker if not required on this inference node", "")
+	}
+
+	// Rapid-MLX pins its full model in unified memory for as long as the
+	// daemon runs, regardless of request activity (confirmed ~20-25GB on
+	// doppio-1 with qwen3-aftertaste-fused) — this is fine on its own, but
+	// an operator running it alongside Ollama needs to account for it when
+	// tuning MAX_LOADED_MODELS, or the node can be overcommitted.
+	if cfg != nil && cfg.Tools.RapidMLX.Enabled && cfg.Tools.Ollama.Enabled {
+		r.warn("ADVISORY",
+			"Rapid-MLX and Ollama both enabled — Rapid-MLX holds its model resident in memory continuously",
+			"Account for Rapid-MLX's footprint when tuning Ollama's MAX_LOADED_MODELS")
 	}
 }
 

@@ -2,7 +2,7 @@
 
 Configure an Apple Silicon Mac as a production-grade LLM inference node — all from a single interactive TUI binary.
 
-**v2.1.0** replaces the bash pipeline with a Go binary (`headless-macs`) that runs precheck, storage setup, system baseline, tool installation, health check, restore, and update — interactively via TUI or non-interactively via CLI subcommands. The shell scripts remain in the repo for reference but are no longer maintained.
+**v2.1.1** replaces the bash pipeline with a Go binary (`headless-macs`) that runs precheck, storage setup, system baseline, tool installation, health check, restore, and update — interactively via TUI or non-interactively via CLI subcommands. The shell scripts remain in the repo for reference but are no longer maintained.
 
 **Supported tools:** Ollama · Rapid-MLX · mlx-lm · Infinity · Exo
 
@@ -32,6 +32,8 @@ sudo ./headless-macs verify
 
 ### Interactive TUI
 
+![headless-macs main menu](images/Screenshot%203.jpg)
+
 The TUI menu appears. Recommended run order:
 
 | Step | Menu key | What it does |
@@ -44,6 +46,10 @@ The TUI menu appears. Recommended run order:
 | 6 | `v` | Verify — health check of everything installed |
 
 Press `q` at any time to return to the menu or quit.
+
+**Precheck** identifies hardware capability, security posture, prerequisites, and network readiness before any changes are made:
+
+![Precheck screen on a Mac Mini M4 Max with 128 GB RAM](images/Screenshot%201.jpg)
 
 ### Headless / CLI mode
 
@@ -164,6 +170,10 @@ ollama run qwen3:8b "write hello world in python"
 # Re-run Verify to confirm the daemon is healthy after model pull
 sudo ./headless-macs    # → v (Verify)
 ```
+
+**Verify** checks every installed component and reports pass/warn/fail across system, network, storage, and each enabled serving tool:
+
+![Verify screen showing 29 checks passed on a configured node](images/Screenshot%202.jpg)
 
 See [`docs/ram-sizing.md`](docs/ram-sizing.md) for full model recommendations by hardware tier.
 

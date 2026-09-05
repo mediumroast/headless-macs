@@ -320,6 +320,7 @@ var prereqs = []prereq{
 	{"git", "git", false, "brew install git"},
 	{"Ollama", "ollama", false, "install-tools.sh will install"},
 	{"Rapid-MLX", "rapid-mlx", false, "install-tools.sh will install"},
+	{"macmon", "macmon", false, "install-tools.sh will install"},
 }
 
 func (r *PrecheckResult) checkPrerequisites() {
@@ -382,12 +383,48 @@ type portCheck struct {
 	Port int
 }
 
-var toolPorts = []portCheck{
-	{"Ollama", 11434},
-	{"Rapid-MLX", 8000},
-	{"mlx-lm", 8080},
-	{"Infinity", 7997},
-	{"Exo", 52415},
+// effectiveToolPorts reads each tool's actual configured port from cfg,
+// falling back to that tool's own install-time default only when the
+// config value is unset (0) — matching the fallback logic in tools.go
+// exactly, so a precheck port-availability check on a customized config
+// checks the port that will actually be used, not always the shipped
+// template's value. (Ollama's port is embedded in its Host string rather
+// than a separate field, so it stays a fixed constant here — a narrower,
+// pre-existing gap not addressed by this pass.)
+func effectiveToolPorts(cfg *config.Config) []portCheck {
+	ports := []portCheck{{"Ollama", 11434}}
+	if cfg == nil {
+		return append(ports,
+			portCheck{"Rapid-MLX", 8080}, portCheck{"mlx-lm", 8000},
+			portCheck{"Infinity", 7997}, portCheck{"Exo", 52415}, portCheck{"macmon", 9090})
+	}
+	rapidMLXPort := cfg.Tools.RapidMLX.Port
+	if rapidMLXPort == 0 {
+		rapidMLXPort = 8080
+	}
+	mlxlmPort := cfg.Tools.MLXLM.Port
+	if mlxlmPort == 0 {
+		mlxlmPort = 8000
+	}
+	infinityPort := cfg.Tools.Infinity.Port
+	if infinityPort == 0 {
+		infinityPort = 7997
+	}
+	exoPort := cfg.Tools.Exo.ChatGPTAPIPort
+	if exoPort == 0 {
+		exoPort = 52415
+	}
+	macmonPort := cfg.Tools.Macmon.Port
+	if macmonPort == 0 {
+		macmonPort = 9090
+	}
+	return append(ports,
+		portCheck{"Rapid-MLX", rapidMLXPort},
+		portCheck{"mlx-lm", mlxlmPort},
+		portCheck{"Infinity", infinityPort},
+		portCheck{"Exo", exoPort},
+		portCheck{"macmon", macmonPort},
+	)
 }
 
 func (r *PrecheckResult) checkNetwork(cfg *config.Config) {
@@ -405,7 +442,7 @@ func (r *PrecheckResult) checkNetwork(cfg *config.Config) {
 	}
 
 	// Port availability
-	for _, p := range toolPorts {
+	for _, p := range effectiveToolPorts(cfg) {
 		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p.Port))
 		if err != nil {
 			// Port in use — try to identify the process
@@ -625,7 +662,6 @@ func (r *PrecheckResult) checkConfigKeys() {
 
 	if len(stale) == 0 {
 		r.ok("CONFIG", "No stale or unrecognized keys in config.json")
-		return
 	}
 	for _, path := range stale {
 		if reason, ok := renamedConfigKeys[path]; ok {
@@ -635,6 +671,27 @@ func (r *PrecheckResult) checkConfigKeys() {
 				"Not used by this version — may be a typo or left over from an older release")
 		}
 	}
+
+	// Discoverability nudge for opt-in features an existing config predates
+	// entirely (Phase 9G) — reuses userPaths above rather than a second
+	// parse. Only fires when the whole section is missing, not when it's
+	// present with enabled: false — the latter means the operator already
+	// saw and considered it.
+	for path, msg := range newOptInFeatures {
+		if !userPaths[path] {
+			r.info("CONFIG", msg)
+		}
+	}
+}
+
+// newOptInFeatures maps a config.json section path to a one-time discovery
+// message, shown when that section is entirely absent from an existing
+// install's config (not just disabled) — so an operator upgrading the
+// binary learns a new opt-in capability exists instead of never finding
+// out short of reading CHANGELOG.md. Add an entry here whenever a future
+// phase adds a new optional tools.* section.
+var newOptInFeatures = map[string]string{
+	"tools.macmon": "macmon hardware telemetry available (Phase 9) — not configured; see docs/tool-comparison.md",
 }
 
 // knownConfigKeyPaths returns every dotted JSON key path the current

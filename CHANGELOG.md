@@ -12,7 +12,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 _Changes on the current branch not yet merged to main._
 
 Phase 7: serving-tool log management. Phase 8: unnecessary service
-suppression.
+suppression. Phase 9: macmon hardware telemetry daemon.
 
 ### Fixed
 
@@ -55,6 +55,10 @@ suppression.
   contract). Now check status code and, when given a real pattern, body
   content — restoring the original bash behavior. Backfilled to every
   existing Ollama/Rapid-MLX/mlx-lm/Infinity/Exo check in `verify.go`
+- **`docs/tool-comparison.md`'s Exo section described discovery mechanisms
+  that don't exist** — Tailscale-based discovery and a `--discovery-module`
+  flag, stale since the Exo CLI fix above. Corrected to describe the real
+  `--bootstrap-peers`/`--namespace`/zenoh-based mechanism
 
 ### Added
 
@@ -95,6 +99,27 @@ suppression.
   removed field (like `tools.exo.discovery_module` above) gets a specific
   `[WARN]` explaining what changed, instead of silently sitting in the
   file forever doing nothing
+- **macmon hardware telemetry daemon** (`com.llm-server.macmon`, new
+  `tools.macmon` config block, disabled by default) — CPU/GPU/ANE power,
+  temperature, and memory stats over HTTP (`GET /json`, `/metrics` in
+  Prometheus format), running unprivileged as `_llmserver`. Detects
+  whether the installed macmon build supports a `--host` flag and honors
+  `network.localhost_only` when it does; `[WARN]`s in both `install-tools`
+  and `verify` when it doesn't, rather than silently binding all
+  interfaces. New Verify `MACMON` section, Restore cleanup, and Precheck
+  coverage (added to `prereqs` and the port-availability check)
+- **Precheck's port-availability check is now config-driven** — the
+  hardcoded default-port list (`toolPorts`) is replaced by
+  `effectiveToolPorts(cfg)`, reading each tool's actual configured port
+  and only falling back to the tool's own default when unset. Previously
+  harmless only because the shipped template's ports happened to match
+  the hardcoded list; an operator who customized a tool's port got checked
+  against the wrong one, silently
+- **Precheck nudges about newly-available opt-in features** — when a
+  config section like `tools.macmon` is entirely absent from an existing
+  install's `config.json` (not just disabled), Precheck prints a one-time
+  `[INFO]` pointing at the docs, distinguishing "never configured" from
+  "explicitly disabled" (the latter gets no nudge)
 
 ### Changed
 
@@ -105,12 +130,15 @@ suppression.
 
 ### Upgrading an existing install
 
-Both phases above are picked up automatically the next time their
+All three phases above are picked up automatically the next time their
 respective command runs — there is no separate migration step:
 
 - **Phase 7's fixes** (Ollama, Exo, mlx-lm/Infinity/Rapid-MLX logging, the
   shared logrotate daemon): re-run `sudo headless-macs install-tools`.
 - **Phase 8's suppressions**: re-run `sudo headless-macs baseline`.
+- **Phase 9's macmon**: opt-in — set `tools.macmon.enabled: true` in
+  `config.json`, then re-run `sudo headless-macs install-tools`. Precheck
+  will mention it's available if you haven't seen the note.
 
 Run `sudo headless-macs verify` afterward to confirm — its `[WARN]`/`[FAIL]`
 messages name the exact command to fix whatever they flag.

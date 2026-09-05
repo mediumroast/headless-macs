@@ -126,6 +126,12 @@ func RunTools(cfg *config.Config) (*ToolsResult, error) {
 		r.add("EXO", ActionSkip, "Exo disabled in config", "")
 	}
 
+	if cfg.Tools.Macmon.Enabled {
+		r.installMacmon(cfg, localhostOnly)
+	} else {
+		r.add("MACMON", ActionSkip, "macmon disabled in config", "")
+	}
+
 	r.installLogRotate()
 
 	ilog.Info(fmt.Sprintf("Log written to: %s", logPath))
@@ -963,6 +969,115 @@ func exoPlist(bin, port, bootstrapPeers, home, exoHome string) string {
 </dict>
 </plist>
 `, bin, port, peersArg, home, exoHome)
+}
+
+// ---------------------------------------------------------------------------
+// macmon (hardware telemetry — not a serving/inference tool)
+// ---------------------------------------------------------------------------
+
+func (r *ToolsResult) installMacmon(cfg *config.Config, localhostOnly bool) {
+	section := "MACMON"
+
+	macmonBin := "/opt/homebrew/bin/macmon"
+	if path, err := exec.LookPath("macmon"); err == nil {
+		macmonBin = path
+		r.add(section, ActionSkip, "macmon already installed: "+macmonBin, "")
+	} else {
+		r.add(section, ActionInfo, "Installing macmon via Homebrew…", "")
+		if exec.Command("brew", "install", "macmon").Run() != nil {
+			r.add(section, ActionFail, "Could not install macmon via Homebrew", "")
+			return
+		}
+		if p, err := exec.LookPath("macmon"); err == nil {
+			macmonBin = p
+		}
+		r.add(section, ActionSet, "macmon installed", "")
+	}
+
+	_ = os.MkdirAll("/var/log/macmon", 0755)
+	_ = exec.Command("chown", llmserverUser+":"+llmserverUser, "/var/log/macmon").Run()
+
+	// The Homebrew macmon build's `serve` subcommand has not consistently
+	// shipped a --host/--bind flag (confirmed absent on doppio-1,
+	// 2026-09-05 — see FUTURES.md/PHASE_9_PLAN.md history). Detect support
+	// rather than assume it, so a version that does support it gets
+	// localhost_only honored, and one that doesn't gets a clear warning
+	// instead of silently binding all interfaces.
+	helpOut, _ := exec.Command(macmonBin, "serve", "--help").CombinedOutput()
+	hostSupported := strings.Contains(string(helpOut), "--host")
+
+	port := fmt.Sprintf("%d", cfg.Tools.Macmon.Port)
+	if cfg.Tools.Macmon.Port == 0 {
+		port = "9090"
+	}
+	interval := fmt.Sprintf("%d", cfg.Tools.Macmon.IntervalMs)
+	if cfg.Tools.Macmon.IntervalMs == 0 {
+		interval = "1000"
+	}
+
+	var hostArg string
+	if hostSupported {
+		host := "0.0.0.0"
+		if localhostOnly {
+			host = "127.0.0.1"
+		}
+		hostArg = host
+	} else if localhostOnly {
+		r.add(section, ActionWarn,
+			"macmon build has no --host flag — cannot honor localhost_only, binding all interfaces",
+			"Upgrade macmon (brew upgrade macmon) and re-run install-tools once a version with --host is available")
+	}
+
+	plistPath := "/Library/LaunchDaemons/com.llm-server.macmon.plist"
+	plistContent := macmonPlist(macmonBin, hostArg, port, interval, llmserverHome, llmserverUser)
+	if err := os.WriteFile(plistPath, []byte(plistContent), 0644); err != nil {
+		r.add(section, ActionFail, "Could not write macmon plist: "+err.Error(), "")
+		return
+	}
+	_ = exec.Command("chown", "root:wheel", plistPath).Run()
+	_ = exec.Command("chmod", "644", plistPath).Run()
+	loadDaemon(plistPath)
+	r.add(section, ActionSet, "com.llm-server.macmon installed and started", "")
+
+	time.Sleep(2 * time.Second)
+	r.checkEndpoint(section, "macmon", fmt.Sprintf("http://127.0.0.1:%s/json", port), "cpu_power", 10)
+}
+
+// macmonPlist builds the com.llm-server.macmon LaunchDaemon. hostArg is ""
+// when the installed macmon build has no --host flag (the --host argument
+// is omitted entirely in that case, not passed empty).
+func macmonPlist(bin, hostArg, port, interval, home, user string) string {
+	hostArgXML := ""
+	if hostArg != "" {
+		hostArgXML = fmt.Sprintf("    <string>--host</string><string>%s</string>\n", hostArg)
+	}
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.llm-server.macmon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>%s</string>
+    <string>serve</string>
+    <string>-p</string><string>%s</string>
+    <string>-i</string><string>%s</string>
+%s  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>%s</string>
+    <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/var/log/macmon/stdout.log</string>
+  <key>StandardErrorPath</key><string>/var/log/macmon/stderr.log</string>
+  <key>WorkingDirectory</key><string>/tmp</string>
+  <key>UserName</key><string>%s</string>
+</dict>
+</plist>
+`, bin, port, interval, hostArgXML, home, user)
 }
 
 // ---------------------------------------------------------------------------

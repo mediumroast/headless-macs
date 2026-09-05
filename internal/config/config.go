@@ -23,6 +23,7 @@ type Tools struct {
 	MLXLM    MLXLMTool    `json:"mlx_lm"`
 	Infinity InfinityTool `json:"infinity"`
 	Exo      ExoTool      `json:"exo"`
+	Macmon   MacmonTool   `json:"macmon"`
 }
 
 type OllamaTool struct {
@@ -74,6 +75,16 @@ type ExoTool struct {
 	// which mapped to a --discovery-module flag that does not exist in any
 	// current exo release — see PHASE_7_PLAN.md history.
 	BootstrapPeers []string `json:"bootstrap_peers"`
+}
+
+// MacmonTool configures the macmon hardware telemetry daemon
+// (com.llm-server.macmon) — CPU/GPU/ANE power, temperature, and memory
+// stats over HTTP. Not a serving/inference tool; opt-in, disabled by
+// default. See PHASE_9_PLAN.md.
+type MacmonTool struct {
+	Enabled    bool `json:"enabled"`
+	Port       int  `json:"port"`
+	IntervalMs int  `json:"interval_ms"`
 }
 
 type Storage struct {

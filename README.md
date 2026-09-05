@@ -81,6 +81,7 @@ Output uses the same `[SET]`/`[SKIP]`/`[WARN]`/`[PASS]`/`[FAIL]` prefix conventi
 | **mlx-lm** | Custom HuggingFace models not in Rapid-MLX | 8080 | Use when you need a specific HF path. |
 | **Infinity** | Embeddings + reranking for RAG pipelines | 7997 | MPS-accelerated. OpenAI-compatible `/v1/embeddings` and `/v1/rerank`. |
 | **Exo** | Multi-Mac distributed inference | 52415 | Pools unified memory across devices. Requires auto-login. |
+| **macmon** | Hardware telemetry (not inference) | 9090 | CPU/GPU/ANE power, temp, memory over HTTP. `GET /json`, `/metrics` (Prometheus). Disabled by default. |
 
 Enable tools through the **Edit Config** screen (`c` from the menu), or by editing `~/.headless_macs/config.json` directly:
 
@@ -91,7 +92,8 @@ Enable tools through the **Edit Config** screen (`c` from the menu), or by editi
     "rapid_mlx": { "enabled": false },
     "mlx_lm":   { "enabled": false },
     "infinity":  { "enabled": false },
-    "exo":       { "enabled": false }
+    "exo":       { "enabled": false },
+    "macmon":    { "enabled": false }
   }
 }
 ```
@@ -107,6 +109,14 @@ See [`docs/tool-comparison.md`](docs/tool-comparison.md) for a full comparison.
 > details.
 
 > **Network defaults:** Services bind to `localhost` (`127.0.0.1`) by default and the firewall is left enabled. Set `"localhost_only": false` to allow LAN clients. If you run unsigned Python services (Rapid-MLX, mlx-lm, Infinity) and cannot manage per-app firewall rules, also set `"disable_firewall": true` — only do this on an isolated trusted network.
+
+> **macmon binding:** the Homebrew-installed `macmon` build has not
+> consistently shipped a `--host`/`--bind` flag. `headless-macs` detects
+> this automatically — if present, `localhost_only` is honored like every
+> other tool; if not, macmon binds all interfaces regardless of that
+> setting, and both `install-tools` and `verify` print a `[WARN]`
+> explaining why. `brew upgrade macmon` then re-run `install-tools` once a
+> version with `--host` is available.
 
 ---
 

@@ -113,6 +113,7 @@ func (r *RestoreResult) sectionRemoveDaemons() {
 		{"/Library/LaunchDaemons/com.llm-server.pmset-heal.plist", "com.llm-server.pmset-heal"},
 		{"/Library/LaunchDaemons/com.llm-server.storage-mount.plist", "com.llm-server.storage-mount"},
 		{logrotatePlistPath, "com.llm-server.logrotate"},
+		{"/Library/LaunchDaemons/com.llm-server.macmon.plist", "com.llm-server.macmon"},
 	}
 
 	for _, d := range daemons {
@@ -133,6 +134,15 @@ func (r *RestoreResult) sectionRemoveDaemons() {
 		r.add(sec, ActionSet, "Removed "+logrotateConfigPath, "")
 	} else {
 		r.add(sec, ActionSkip, logrotateConfigPath+" (not present)", "")
+	}
+
+	// macmon logs — daemon itself is removed above; does not brew uninstall
+	// macmon, matching how Restore treats every other tool's package.
+	if _, err := os.Stat("/var/log/macmon"); err == nil {
+		os.RemoveAll("/var/log/macmon")
+		r.add(sec, ActionSet, "Removed /var/log/macmon", "")
+	} else {
+		r.add(sec, ActionSkip, "/var/log/macmon (not present)", "")
 	}
 
 	// Exo LaunchAgent (user-level)

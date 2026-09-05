@@ -111,6 +111,7 @@ func RunVerify(cfg *config.Config) (*VerifyResult, error) {
 	r.sectionMLXLM(cfg)
 	r.sectionInfinity(cfg)
 	r.sectionExo(cfg)
+	r.sectionMacmon(cfg)
 	r.sectionMemory()
 
 	ilog.Info(fmt.Sprintf("Result: %d pass  %d warn  %d fail", r.Passes, r.Warnings, r.Failures))
@@ -678,6 +679,39 @@ func (r *VerifyResult) sectionExo(cfg *config.Config) {
 		} else {
 			r.warn(sec, "EXO_HOME not set — exo's own logs/state default to the hidden ~/.exo",
 				"Fix: sudo headless-macs install-tools")
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// MACMON
+// ---------------------------------------------------------------------------
+
+func (r *VerifyResult) sectionMacmon(cfg *config.Config) {
+	sec := "MACMON"
+
+	if !cfg.Tools.Macmon.Enabled {
+		r.skip(sec, "Not enabled in config")
+		return
+	}
+
+	r.checkDaemon(sec, "com.llm-server.macmon")
+
+	port := fmt.Sprintf("%d", cfg.Tools.Macmon.Port)
+	if cfg.Tools.Macmon.Port == 0 {
+		port = "9090"
+	}
+	r.checkHTTP(sec, "macmon", fmt.Sprintf("http://127.0.0.1:%s/json", port), "cpu_power", 10)
+
+	// Binding limitation (Phase 9) — some macmon builds have no --host flag
+	// at all, so localhost_only can't be honored for this tool the way it
+	// is for every other one; surface that clearly rather than letting it
+	// pass silently as "exposed by config."
+	if plist, err := os.ReadFile("/Library/LaunchDaemons/com.llm-server.macmon.plist"); err == nil {
+		content := string(plist)
+		if cfg.Network.LocalhostOnly && !plistHasArg(content, "--host") {
+			r.warn(sec, "localhost_only is true but this macmon build has no --host flag — bound to all interfaces",
+				"Upgrade macmon (brew upgrade macmon) and re-run install-tools")
 		}
 	}
 }

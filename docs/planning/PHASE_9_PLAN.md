@@ -1,17 +1,12 @@
 # PHASE 9 PLAN — macmon Hardware Telemetry Daemon
 
-**Update: Phase 9G added — remediation for existing installs.** Confirms
-this phase's own idempotency decision (tool-install pattern, not
-write-once) already avoids Phase 7H's logrotate-style gap; the remaining
-open item is discoverability of an opt-in feature an existing box's config
-doesn't know about yet, not a correctness fix.
-
-**Update: Precheck/Verify review completed.** Two additions found: macmon
-needs adding to Precheck's existing prereqs/port-check lists (same pattern
-as every other tool), and `sectionMacmon()`'s HTTP check depends on a
-`checkHTTP()` capability (status/body-content matching) that doesn't exist
-yet — traced to Phase 7I, where the fix belongs since it's a shared
-helper, not macmon-specific.
+**Status: 9A–9E and 9G all implemented, build/vet/test clean.** Every
+checklist item is checked off except Phase 9F (doppio-1 reconciliation),
+which genuinely has to be run on that box, not from here — exact commands
+are in that section. Also fixed in passing while writing the
+`tool-comparison.md` macmon entry: that file's Exo section still described
+Tailscale-based discovery, stale since Phase 7's Exo CLI fix — corrected
+alongside the new content rather than left standing next to it.
 
 ## Intent
 
@@ -69,7 +64,7 @@ as every other serving tool today. See "Deferred" in the scope table below.
 ### Phase 9A — Config schema
 **Goal:** `tools.macmon` exists and loads.
 
-- [ ] Add to `config.json`:
+- [x] Added to `config.json`:
   ```json
   "macmon": {
     "enabled": false,
@@ -77,64 +72,59 @@ as every other serving tool today. See "Deferred" in the scope table below.
     "interval_ms": 1000
   }
   ```
-- [ ] Extend the config Go struct (wherever `tools.ollama` etc. are defined,
-      likely `internal/config/config.go`) with a matching `Macmon` field
-- [ ] Unit test: loading `config.json` yields the expected default macmon
-      struct values
+- [x] Extended the config Go struct: new `MacmonTool` type
+      (`internal/config/config.go`), `Tools.Macmon MacmonTool \`json:"macmon"\``
+- [x] Unit test: `TestLoadTemplate` now asserts `Macmon.Enabled == false`,
+      `Macmon.Port == 9090`, `Macmon.IntervalMs == 1000` from the shipped
+      template
 
 **Precheck additions found on review, not yet in the plan above:**
 
-- [ ] Add `macmon` to `precheck.go`'s `prereqs` list (info-only, matching
-      Ollama/Rapid-MLX's existing treatment: `commandExists` check,
-      `"install-tools.sh will install"` fix hint). The existing list checks
-      unconditionally regardless of each tool's `enabled` flag — Rapid-MLX
-      is checked even though it defaults to `enabled: false` — so adding
-      macmon unconditionally is consistent with that precedent, not new
-      noise.
-- [ ] Add macmon's port to `precheck.go`'s `toolPorts` list (`checkNetwork()`)
-      so port-availability checking covers it like every other tool.
-      **Note found while doing this:** `toolPorts` hardcodes each tool's
-      *default* port rather than reading the operator's actual configured
-      port from `cfg` — currently harmless only because the shipped
-      `config.json` template's ports happen to match the hardcoded list.
-      An operator who customizes `mlx_lm.port` (for example) would get a
-      port-availability check against the wrong port, silently. Not
-      introduced by this phase, but adding a sixth hardcoded entry
-      compounds an existing fragility — worth fixing to read from `cfg`
-      while touching this list, though not a hard requirement for Phase 9
-      itself.
+- [x] Added `macmon` to `precheck.go`'s `prereqs` list, matching
+      Ollama/Rapid-MLX's existing treatment exactly
+- [x] Added macmon to `precheck.go`'s port-availability check — and fixed
+      the fragility noted here while touching it: `toolPorts` (a static
+      var) is replaced by `effectiveToolPorts(cfg)`, which reads each
+      tool's actual configured port and falls back to that tool's own
+      install-time default only when unset, for Rapid-MLX/mlx-lm/Infinity/
+      Exo/macmon. Ollama's port stays a fixed constant (it's embedded in a
+      `Host` string field, not a separate `Port` int, so extracting it
+      would need string parsing — left as a narrower, still-open gap, not
+      addressed by this pass).
 
 **Files touched:** `config.json`, `internal/config/config.go`, `internal/config/config_test.go`,
-`internal/ops/precheck.go` (prereqs + port list; port-list config-driven fix optional)
+`internal/ops/precheck.go` (prereqs + `effectiveToolPorts()`)
 
 ---
 
 ### Phase 9B — `installMacmon()` and `macmonPlist()`
 **Goal:** Port the confirmed doppio-1 manual install into `tools.go`.
 
-- [ ] Guard: only proceed if `tools.macmon.enabled` is `true` (matches the
-      tool-install pattern's step 1)
-- [ ] Install `macmon` via Homebrew if not already present
-      (`command -v macmon` skip-if-present check)
-- [ ] Create `/var/log/macmon/`, owned `_llmserver:wheel`, before writing
+- [x] Guard: `RunTools` dispatches to `installMacmon()` only when
+      `tools.macmon.enabled` is `true`, matching every other tool's
+      `if cfg.Tools.X.Enabled { ... } else { ActionSkip }` pattern exactly
+- [x] Install `macmon` via Homebrew if not already present
+      (`exec.LookPath("macmon")` skip-if-present check, matching Ollama's
+      pattern rather than a raw `command -v` shell-out)
+- [x] Create `/var/log/macmon/`, owned `_llmserver:wheel`, before writing
       the plist
-- [ ] Detect `--host` flag support (`macmon serve --help` output parsing);
-      record the result for use in `macmonPlist()` and for the `[WARN]`
-      surfaced in Phase 9E
-- [ ] Build `ProgramArguments`:
+- [x] Detect `--host` flag support: `macmon serve --help` output checked
+      for the `--host` substring
+- [x] Built `ProgramArguments`:
   - Always: `serve`, `-p <port>`, `-i <interval_ms>`
-  - If `--host` supported: add `--host 127.0.0.1` (or the configured host)
-    honoring `network.localhost_only` exactly as other tools do
-  - If not supported: omit; the daemon binds all interfaces
-- [ ] `macmonPlist()`: `UserName _llmserver`, `WorkingDirectory /tmp`,
+  - If `--host` supported: added, honoring `network.localhost_only`
+  - If not supported: omitted entirely (not passed empty) — the daemon
+    binds all interfaces, and a `[WARN]` is emitted when this collides
+    with `localhost_only: true`
+- [x] `macmonPlist()`: `UserName _llmserver`, `WorkingDirectory /tmp`,
       `HOME=/Library/LLMServer` + standard `PATH` in `EnvironmentVariables`,
       `RunAtLoad`/`KeepAlive` true, logs to
       `/var/log/macmon/{stdout,stderr}.log`
-- [ ] `chown root:wheel` + `chmod 644` on the plist; `loadDaemon()` (bootout
+- [x] `chown root:wheel` + `chmod 644` on the plist; `loadDaemon()` (bootout
       then bootstrap) — matches every other tool's load pattern exactly
-- [ ] Post-install `checkEndpoint()` call against `http://127.0.0.1:<port>/json`
-      (non-fatal `|| true`, matching the existing pattern), confirming a
-      `cpu_power` key in the response
+- [x] Post-install `checkEndpoint()` call against `http://127.0.0.1:<port>/json`
+      with pattern `"cpu_power"` — made possible by Phase 7I's
+      `checkEndpoint`/`checkHTTP` pattern-match fix landing first
 
 **Files touched:** `internal/ops/tools.go`
 
@@ -143,13 +133,12 @@ as every other serving tool today. See "Deferred" in the scope table below.
 ### Phase 9C — Verify
 **Goal:** `verify.go` gets a MACMON section.
 
-- [ ] `sectionMacmon(cfg *config.Config)`: `checkDaemon("com.llm-server.macmon")`
-      when `tools.macmon.enabled`; confirm `GET http://127.0.0.1:<port>/json`
-      actually returns macmon's data, not just any 200
-- [ ] `[WARN]` if the installed macmon build lacks `--host` support and
-      `network.localhost_only` is `true` — i.e., the operator asked for
-      loopback-only but this build can't honor it
-- [ ] `[SKIP]` the whole section when `tools.macmon.enabled` is `false`
+- [x] `sectionMacmon(cfg *config.Config)`: `checkDaemon("com.llm-server.macmon")`
+      when `tools.macmon.enabled`; `checkHTTP(..., "cpu_power", ...)` confirms
+      it's actually macmon responding, not just any 200
+- [x] `[WARN]` when the installed macmon build lacks `--host` in its
+      written plist and `network.localhost_only` is `true`
+- [x] `[SKIP]` the whole section when `tools.macmon.enabled` is `false`
 
 **Dependency resolved:** `checkHTTP()` previously only checked that an HTTP
 round-trip succeeded — no status-code check, no body-content check at all,
@@ -169,9 +158,10 @@ implemented — no further Verify-helper work needed first.
 ### Phase 9D — Restore
 **Goal:** `restore` cleans up macmon exactly like it does every other tool.
 
-- [ ] Bootout `com.llm-server.macmon`, remove its plist
-- [ ] Remove `/var/log/macmon/`
-- [ ] Do not `brew uninstall macmon` (matches existing Restore behavior for
+- [x] Bootout `com.llm-server.macmon`, remove its plist (added to
+      `sectionRemoveDaemons()`'s existing daemon list)
+- [x] Remove `/var/log/macmon/`
+- [x] Do not `brew uninstall macmon` (matches existing Restore behavior for
       other tools' packages)
 
 **Files touched:** `internal/ops/restore.go`
@@ -182,14 +172,21 @@ implemented — no further Verify-helper work needed first.
 **Goal:** Operators know macmon exists, what it exposes, and its current
 binding limitation.
 
-- [ ] Add a macmon entry to `docs/tool-comparison.md` (it's not a serving
-      tool, so note it's a telemetry/observability addition, not an
-      inference backend)
-- [ ] Document the `--host`-flag version gap and the resulting `[WARN]`
-      behavior in `README.md` or `docs/known-issues.md`, so an operator who
-      sees the warning understands why and what upgrading `macmon` would fix
+- [x] Added a macmon entry to `docs/tool-comparison.md`, framed as a
+      telemetry/observability addition, not an inference backend
+- [x] Documented the `--host`-flag version gap and the `[WARN]` behavior in
+      both `README.md` (new blockquote, matching the existing
+      Rapid-MLX-memory/Network-defaults note style) and
+      `docs/tool-comparison.md`
+- [x] **Found and fixed while touching this file, not part of the original
+      plan:** `docs/tool-comparison.md`'s Exo section still described
+      Tailscale-based discovery and referenced a `--discovery-module` flag
+      — both stale since Phase 7's Exo CLI fix (neither exists in current
+      exo). Corrected with an inline note explaining what changed and why,
+      rather than leaving actively-wrong documentation next to the new
+      macmon entry.
 
-**Files touched:** `docs/tool-comparison.md`, `README.md` or `docs/known-issues.md`
+**Files touched:** `docs/tool-comparison.md`, `README.md`
 
 ---
 
@@ -197,18 +194,32 @@ binding limitation.
 **Goal:** Replace the manually-installed proof-of-concept with the real,
 config-driven daemon.
 
-- [ ] On doppio-1: bootout and remove the manually-installed
-      `com.llm-server.macmon` plist and `/var/log/macmon/` created during
-      FUTURES.md Item 11 validation
-- [ ] Set `tools.macmon.enabled: true` in doppio-1's
-      `~/.headless_macs/config.json`
-- [ ] Run `sudo headless-macs install-tools` and confirm the daemon comes
-      back up identically (same `GET /json` response shape) via the new
-      code path
-- [ ] Re-confirm the `0.0.0.0` binding decision from the FUTURES.md
-      discussion still applies at the config level (`network.localhost_only: false`
-      for now, per the existing project decision to defer security
-      hardening)
+**Not done — needs to be run on doppio-1 itself, not from this session.**
+Steps, unchanged from the original plan:
+
+```bash
+# 1. Remove the manual proof-of-concept from FUTURES.md Item 11 validation
+sudo launchctl bootout system /Library/LaunchDaemons/com.llm-server.macmon.plist
+sudo rm /Library/LaunchDaemons/com.llm-server.macmon.plist
+sudo rm -rf /var/log/macmon
+
+# 2. Enable macmon in config
+#    edit ~/.headless_macs/config.json: "macmon": { "enabled": true, ... }
+
+# 3. Reinstall via the new code path
+sudo headless-macs install-tools
+
+# 4. Confirm
+curl -s http://127.0.0.1:9090/json | jq .
+sudo headless-macs verify   # should show a MACMON section, [PASS] throughout
+```
+
+- [ ] Bootout/remove the manual instance
+- [ ] Enable `tools.macmon` in doppio-1's config
+- [ ] Re-run `install-tools`, confirm `GET /json` matches the shape
+      validated manually in FUTURES.md Item 11
+- [ ] Re-confirm the `0.0.0.0` binding decision still applies
+      (`network.localhost_only: false`, deferred security hardening)
 
 **Files touched:** none (operational step on doppio-1, not a code change)
 
@@ -237,23 +248,20 @@ reading `CHANGELOG.md` or this repo's docs directly. "Stale config" here
 manifests as "config technically fine, but missing a feature the operator
 doesn't know to ask for" rather than "something is broken."
 
-- [ ] Recommend: Precheck or the new Status screen (Phase 10) prints a
-      one-time `[INFO]` (not a warning — nothing is wrong) when
-      `tools.macmon` is entirely absent from the loaded config, e.g.
-      `"macmon hardware telemetry available (v2.4.0+) — not configured; see
-      README"`. Distinguish "key absent from file" from "key present with
-      enabled: false" if practical (the latter means the operator already
-      made an explicit choice and doesn't need a nudge) — this needs the
-      raw-JSON-tree comparison already proposed in Phase 7H's stale-key
-      detector, so consider building both on the same mechanism rather
-      than two separate ad hoc checks.
-- [ ] The Phase 7H stale-key detector itself has nothing to flag from this
-      phase — macmon only *adds* config keys, it never renames or removes
-      any. Confirmed, no action needed.
+- [x] Implemented in `checkConfigKeys()` (`precheck.go`), reusing the
+      `userPaths` map Phase 7H's stale-key detector already builds — no
+      second JSON parse. New `newOptInFeatures map[string]string` (path →
+      message) is checked after the stale-key warnings: an `[INFO]` fires
+      only when the section is entirely absent (`!userPaths["tools.macmon"]`),
+      not when it's present with `enabled: false` — the distinction the
+      plan asked for, verified with a throwaway table-driven test (both
+      directions correct, test not committed). Adding a future opt-in
+      section just means one more map entry, not a new check.
+- [x] Confirmed the stale-key detector itself has nothing to flag from
+      this phase — macmon only adds config keys, never renames or removes
+      any.
 
-**Files touched (when implemented):** `internal/ops/precheck.go` (or
-`internal/ops/status.go` once Phase 10 exists) — shares the raw-JSON-tree
-mechanism from Phase 7H rather than introducing a second one.
+**Files touched:** `internal/ops/precheck.go`
 
 ---
 
@@ -262,14 +270,14 @@ mechanism from Phase 7H rather than introducing a second one.
 | File | Change |
 |---|---|
 | `config.json` | New `tools.macmon` block |
-| `internal/config/config.go` | New `Macmon` config struct field |
+| `internal/config/config.go` | New `MacmonTool` struct, `Tools.Macmon` field |
 | `internal/config/config_test.go` | Test coverage for macmon defaults |
-| `internal/ops/tools.go` | New `installMacmon()` + `macmonPlist()` |
-| `internal/ops/verify.go` | New `sectionMacmon()` |
-| `internal/ops/restore.go` | Bootout + cleanup for `com.llm-server.macmon` |
-| `docs/tool-comparison.md` | macmon entry |
-| `README.md` / `docs/known-issues.md` | `--host` flag version-gap note |
-| `internal/ops/precheck.go` | *(Phase 9G, not yet implemented)* "macmon available, not configured" discoverability nudge; macmon added to `prereqs`/`toolPorts` |
+| `internal/ops/tools.go` | New `installMacmon()` + `macmonPlist()`, dispatched from `RunTools` |
+| `internal/ops/verify.go` | New `sectionMacmon()`, dispatched from `RunVerify` |
+| `internal/ops/restore.go` | Bootout + plist removal + `/var/log/macmon` cleanup |
+| `internal/ops/precheck.go` | macmon added to `prereqs`; `toolPorts` replaced by config-driven `effectiveToolPorts()`; discoverability nudge (`newOptInFeatures`) in `checkConfigKeys()` |
+| `docs/tool-comparison.md` | macmon entry; also corrected stale Exo/Tailscale content found in passing |
+| `README.md` | macmon table row, config example, `--host` version-gap blockquote |
 
 ---
 

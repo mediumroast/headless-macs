@@ -37,6 +37,11 @@
       "enabled": false,
       "chatgpt_api_port": 52415,
       "bootstrap_peers": []
+    },
+    "macmon": {
+      "enabled": false,
+      "port": 9090,
+      "interval_ms": 1000
     }
   },
   "storage": {

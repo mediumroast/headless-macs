@@ -91,7 +91,21 @@ re-verifies its API responds afterward:
 
 ### Headless / CLI mode
 
-Every operation is available as a subcommand for scripting, cron, or remote SSH automation:
+Every TUI function except Edit Config is available as a subcommand for scripting, cron, or remote SSH automation — there's no CLI flag for changing config values (that's what `config.json`/the TUI editor are for), just for running the operations themselves:
+
+| Sidebar key | Function | CLI equivalent |
+|---|---|---|
+| `d` | Dashboard | `status` (`--watch` for the same live refresh) |
+| `p` | Precheck | `precheck` |
+| `t` | Storage Setup | `storage` |
+| `b` | System Baseline | `baseline` |
+| `i` | Install Tools | `install-tools` |
+| `v` | Verify | `verify` |
+| `r` | Restore | `restore` |
+| `u` | Update Tools | `update-tools` |
+| `c` | Edit Config | *(none — edit `config.json` directly, or use the TUI)* |
+
+Besides `status --watch`, no subcommand takes any flags beyond the global `--help`/`--version` — nothing here is configurable from the command line itself:
 
 ```bash
 sudo headless-macs precheck        # Read-only audit — no changes

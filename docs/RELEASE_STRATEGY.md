@@ -111,8 +111,13 @@ git tag -a v2.2.0 -m "Phases 7-10: log management, service suppression, macmon, 
 git push origin v2.2.0
 gh release create v2.2.0 \
   --title "v2.2.0 — Phases 7-10: log management, service suppression, macmon, TUI/CLI restructure" \
-  --notes-file <(sed -n '/## \[2\.2\.0\]/,/## \[2\.1\.1\]/p' CHANGELOG.md | head -n -1)
+  --notes-file <(sed -n '/## \[2\.2\.0\]/,/## \[2\.1\.1\]/p' CHANGELOG.md | sed '$d')
 ```
+
+Use `sed '$d'` to drop the trailing "## [previous version]" heading line, not
+`head -n -1` — `-n -1` is a GNU coreutils extension; macOS's BSD `head` treats
+it as an illegal option and errors, silently producing empty release notes
+(found the hard way releasing v2.2.0).
 
 Tags, not branches, are how old versions are preserved for history. A tag
 is free to leave in place forever; a branch accumulates drift and invites

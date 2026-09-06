@@ -376,7 +376,7 @@ To create a full GitHub Release with notes drawn from the changelog:
 ```bash
 gh release create v1.2.0 \
   --title "v1.2.0 — Phase 5: Security hardening" \
-  --notes-file <(sed -n '/## \[1\.2\.0\]/,/## \[1\.1\.0\]/p' CHANGELOG.md | head -n -1)
+  --notes-file <(sed -n '/## \[1\.2\.0\]/,/## \[1\.1\.0\]/p' CHANGELOG.md | sed '$d')
 ```
 
 ### 3. Verify

@@ -12,7 +12,8 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 _Changes on the current branch not yet merged to main._
 
 Phase 7: serving-tool log management. Phase 8: unnecessary service
-suppression. Phase 9: macmon hardware telemetry daemon.
+suppression. Phase 9: macmon hardware telemetry daemon. Phase 10: TUI
+structure redesign (sidebar + Dashboard) and version-injection fix.
 
 ### Fixed
 
@@ -59,9 +60,45 @@ suppression. Phase 9: macmon hardware telemetry daemon.
   that don't exist** — Tailscale-based discovery and a `--discovery-module`
   flag, stale since the Exo CLI fix above. Corrected to describe the real
   `--bootstrap-peers`/`--namespace`/zenoh-based mechanism
+- **The version string could never actually change** — `main.go`'s
+  `version` was a `const`, which Go's `-ldflags -X` injection cannot
+  target (it only works on package-level string `var`s) — so it had been
+  stuck at the last tagged release across three merged phases of
+  unreleased changes, making every local build indistinguishable from
+  v2.1.1 regardless of what it actually contained, and quietly defeating
+  the new upgrade-nudge feature below (it compares versions by string
+  equality). Fixed: `version` is now a `var`, and the Makefile computes it
+  from `git describe --tags --always --dirty` at build time
+- **The TUI's background didn't paint the app's own colors** — most style
+  tokens set only a foreground color, so whatever showed behind the text
+  was the terminal emulator's own theme, not `colBg` as
+  `docs/TUI_STYLE_GUIDE.md` intended (it even said as much: "referenced
+  but rarely painted"). Not a regression — confirmed via `git diff` that
+  nothing in Phases 7–9 touched any styling file. Fixed by giving every
+  body-context style an explicit background and wrapping the whole
+  screen in one outer full-width/height paint; two related gaps found by
+  direct experiment while fixing this — separators between multiple
+  status-bar hints, and the config editor's label/value spacing — needed
+  their own fix since Lip Gloss doesn't repaint background across an
+  inner style's reset, only at a line's start or its own added padding
 
 ### Added
 
+- **TUI restructured**: a persistent left sidebar (previously a
+  full-screen menu you navigated into and back out of) plus a content
+  pane, with a new **Dashboard** as the default view — live daemon
+  state, resource use (RSS/CPU%), macmon hardware telemetry when enabled,
+  and the upgrade-nudge line below. Below ~70 columns the sidebar
+  collapses to an icon-only rail. New `internal/ops/status.go`
+  (`RunStatus`) backs both the Dashboard and the new `headless-macs
+  status [--watch]` CLI subcommand — same data, one source
+- **Upgrade-awareness nudge**: `baseline`/`install-tools` now record
+  which version last configured a box
+  (`/var/log/mac-llm-setup/.last-configured-version`); the Dashboard and
+  every CLI command print a one-line notice when the running binary
+  differs from that marker, naming the commands to re-run
+- **`tui.dashboard_refresh_ms`** config key — Dashboard's refresh
+  interval, configurable rather than fixed
 - **Five more background services suppressed** on System Baseline: LAN
   Content Caching (`com.apple.AssetCache.builtin`), `mobileassetd`
   (largest unnecessary process by RSS observed on doppio-1), the audio
@@ -130,7 +167,7 @@ suppression. Phase 9: macmon hardware telemetry daemon.
 
 ### Upgrading an existing install
 
-All three phases above are picked up automatically the next time their
+All four phases above are picked up automatically the next time their
 respective command runs — there is no separate migration step:
 
 - **Phase 7's fixes** (Ollama, Exo, mlx-lm/Infinity/Rapid-MLX logging, the
@@ -139,6 +176,10 @@ respective command runs — there is no separate migration step:
 - **Phase 9's macmon**: opt-in — set `tools.macmon.enabled: true` in
   `config.json`, then re-run `sudo headless-macs install-tools`. Precheck
   will mention it's available if you haven't seen the note.
+- **Phase 10's TUI**: nothing to run — just rebuild (`make build`) and
+  launch. The Dashboard's upgrade-nudge line and every CLI command's
+  stderr nudge only start working once a `baseline`/`install-tools` run
+  under this version has written the first version marker.
 
 Run `sudo headless-macs verify` afterward to confirm — its `[WARN]`/`[FAIL]`
 messages name the exact command to fix whatever they flag.

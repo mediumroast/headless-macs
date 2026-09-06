@@ -69,5 +69,8 @@
   "network": {
     "localhost_only": false,
     "disable_firewall": false
+  },
+  "tui": {
+    "dashboard_refresh_ms": 2000
   }
 }

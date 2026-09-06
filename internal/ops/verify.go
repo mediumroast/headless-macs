@@ -158,9 +158,33 @@ func (r *VerifyResult) checkSysctl(section, key, expected string) {
 	}
 }
 
+// daemonStateInDomain parses `launchctl print <domain>/<label>` for run
+// state and PID. Shared by checkDaemon/checkServiceSuppressed here and by
+// internal/ops/status.go's RunStatus — one parse of launchctl's output
+// format, not three. Most daemons live in the "system" domain; Exo's
+// LaunchAgent lives in "gui/<uid>" instead (see daemonState below for the
+// common case).
+func daemonStateInDomain(domain, label string) (running bool, pid int) {
+	out, _ := exec.Command("launchctl", "print", domain+"/"+label).Output()
+	s := string(out)
+	running = strings.Contains(s, "state = running")
+	for _, line := range strings.Split(s, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 3 && fields[0] == "pid" && fields[1] == "=" {
+			pid, _ = strconv.Atoi(fields[2])
+			break
+		}
+	}
+	return running, pid
+}
+
+// daemonState is daemonStateInDomain for the common "system" domain case.
+func daemonState(label string) (running bool, pid int) {
+	return daemonStateInDomain("system", label)
+}
+
 func (r *VerifyResult) checkDaemon(section, label string) bool {
-	out, _ := exec.Command("launchctl", "print", "system/"+label).Output()
-	running := strings.Contains(string(out), "state = running")
+	running, _ := daemonState(label)
 	if running {
 		r.pass(section, label+" running", "")
 	} else {
@@ -401,8 +425,8 @@ func (r *VerifyResult) sectionSystem(cfg *config.Config, sipEnabled bool) {
 // (Phase 8) is not currently running. Unlike checkDaemon, "not running" —
 // including "no such service at all" — is the pass condition here.
 func (r *VerifyResult) checkServiceSuppressed(section, label string) {
-	out, _ := exec.Command("launchctl", "print", "system/"+label).Output()
-	if strings.Contains(string(out), "state = running") {
+	running, _ := daemonState(label)
+	if running {
 		r.warn(section, label+" still running — Baseline suppression not applied or was reverted",
 			"Fix: sudo headless-macs baseline")
 		return

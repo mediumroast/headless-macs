@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -14,7 +15,11 @@ import (
 	"github.com/mediumroast/headless-macs/internal/tui"
 )
 
-const version = "2.1.1"
+// version is a var, not a const, so the Makefile can override it at build
+// time via -ldflags -X (which only works on package-level string vars).
+// "dev" is the fallback for anyone running `go build` directly instead of
+// `make build`. See docs/planning/PHASE_10_PLAN.md — Phase 10-Version.
+var version = "dev"
 
 const usage = `headless-macs — Apple Silicon LLM inference node manager
 
@@ -29,6 +34,7 @@ Commands (run non-interactively, output to stdout + log):
   restore         Undo everything baseline and install-tools applied
   update-tools    In-place binary upgrade for all enabled serving tools
   storage         Configure external model storage volume
+  status          What's running and what it's costing you (add --watch to refresh)
 
   (no command)    Launch the interactive TUI
 
@@ -42,6 +48,9 @@ Logs:   /var/log/mac-llm-setup/
 `
 
 func main() {
+	ops.Version = version
+	tui.Version = version
+
 	args := os.Args[1:]
 	for _, a := range args {
 		if a == "--help" || a == "-h" {
@@ -55,8 +64,8 @@ func main() {
 	}
 	if len(args) > 0 {
 		switch args[0] {
-		case "precheck", "baseline", "install-tools", "verify", "restore", "update-tools", "storage":
-			runCLI(args[0])
+		case "precheck", "baseline", "install-tools", "verify", "restore", "update-tools", "storage", "status":
+			runCLI(args[0], args[1:])
 			return
 		default:
 			fmt.Fprintf(os.Stderr, "unknown command: %s\nRun 'headless-macs --help' for usage.\n", args[0])
@@ -97,7 +106,6 @@ func runTUI() {
 		os.Exit(1)
 	}
 
-	tui.Version = version
 	app := tui.NewApp(cfg, firstRun)
 	p := tea.NewProgram(app, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
@@ -110,9 +118,10 @@ func runTUI() {
 // CLI (headless) mode
 // ---------------------------------------------------------------------------
 
-func runCLI(cmd string) {
+func runCLI(cmd string, rest []string) {
 	checkPlatform()
 	ilog.CLIMode = true
+	printVersionNudge()
 
 	cfg, err := loadConfig(cmd)
 	if err != nil {
@@ -121,6 +130,16 @@ func runCLI(cmd string) {
 	}
 
 	switch cmd {
+	case "status":
+		watch := false
+		for _, a := range rest {
+			if a == "--watch" {
+				watch = true
+			}
+		}
+		runStatusCLI(cfg, watch)
+		return
+
 	case "precheck":
 		r, err := ops.RunPrecheck(cfg)
 		if err != nil {
@@ -201,6 +220,88 @@ func runCLI(cmd string) {
 			os.Exit(1)
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// status subcommand
+// ---------------------------------------------------------------------------
+
+// runStatusCLI prints daemon state + resource use, optionally refreshing
+// in place. Exit code is always 0 — status is informational, not a health
+// gate (verify already owns pass/fail semantics).
+func runStatusCLI(cfg *config.Config, watch bool) {
+	interval := 2 * time.Second
+	if cfg != nil && cfg.TUI.DashboardRefreshMs > 0 {
+		interval = time.Duration(cfg.TUI.DashboardRefreshMs) * time.Millisecond
+	}
+	for {
+		result, err := ops.RunStatus(cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			os.Exit(1)
+		}
+		if watch {
+			fmt.Print("\033[H\033[2J") // clear screen for in-place refresh
+		}
+		printStatus(result)
+		if !watch {
+			return
+		}
+		time.Sleep(interval)
+	}
+}
+
+func printStatus(r *ops.StatusResult) {
+	fmt.Printf("headless-macs %s — status at %s\n\n", version, time.Now().Format(time.RFC1123))
+	for _, d := range r.Daemons {
+		if d.Running {
+			fmt.Printf("[UP]   %-32s PID %-8d %8s  %5.1f%%\n",
+				d.Label, d.PID, formatBytes(d.RSSBytes), d.CPUPercent)
+		} else {
+			fmt.Printf("[DOWN] %-32s\n", d.Label)
+		}
+	}
+	if r.Hardware != nil {
+		h := r.Hardware
+		fmt.Println()
+		fmt.Printf("cpu power  %5.1f W    cpu temp  %5.1f C\n", h.CPUPowerW, h.CPUTempC)
+		fmt.Printf("gpu power  %5.1f W    gpu temp  %5.1f C\n", h.GPUPowerW, h.GPUTempC)
+		fmt.Printf("sys power  %5.1f W\n", h.SysPowerW)
+		if h.RAMTotalB > 0 {
+			fmt.Printf("memory     %s / %s\n", formatBytes(h.RAMUsageB), formatBytes(h.RAMTotalB))
+		}
+	}
+}
+
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%dB", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f%ciB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// printVersionNudge prints a low-key stderr line when the running binary's
+// version differs from whatever last successfully ran Baseline/Install
+// Tools on this box — including "never has," i.e. an existing pre-Phase-10
+// install. Names the commands to re-run; does not enumerate what changed
+// (that's CHANGELOG.md's job). See PHASE_10_PLAN.md, Phase 10G.
+func printVersionNudge() {
+	mismatched, marker := ops.VersionMismatch()
+	if !mismatched {
+		return
+	}
+	if marker == nil {
+		fmt.Fprintf(os.Stderr, "[INFO] This box has never had 'baseline'/'install-tools' run under version %s — run them to apply current fixes.\n", version)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[INFO] Running v%s, but this box was last configured by v%s — re-run 'sudo headless-macs baseline' / 'install-tools' to pick up fixes since then.\n",
+		version, marker.Version)
 }
 
 // ---------------------------------------------------------------------------

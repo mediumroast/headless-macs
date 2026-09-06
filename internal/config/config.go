@@ -15,6 +15,16 @@ type Config struct {
 	Storage Storage `json:"storage"`
 	System  System  `json:"system"`
 	Network Network `json:"network"`
+	TUI     TUI     `json:"tui"`
+}
+
+// TUI holds settings for the interactive terminal UI itself, as opposed
+// to anything it manages. Added for the Dashboard screen (Phase 10).
+type TUI struct {
+	// DashboardRefreshMs is how often the Dashboard screen re-fetches
+	// daemon/hardware status, in milliseconds. 0 (unset) means the
+	// built-in default (2000ms).
+	DashboardRefreshMs int `json:"dashboard_refresh_ms"`
 }
 
 type Tools struct {

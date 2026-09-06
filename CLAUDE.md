@@ -28,6 +28,8 @@ internal/ops/tools.go       RunTools()          — serving stack installation
 internal/ops/verify.go      RunVerify()         — health check
 internal/ops/restore.go     RunRestore()        — undo all changes
 internal/ops/update.go      RunUpdateTools()    — in-place binary upgrade
+internal/ops/status.go      RunStatus()         — daemon state + resource use (Dashboard/CLI status)
+internal/ops/versionmarker.go  WriteVersionMarker()/VersionMismatch() — upgrade-awareness nudge
 ```
 
 The TUI (`internal/tui/`) presents these as screens in a Bubble Tea app. All ops functions are Go-native — they do not shell out to the bash scripts.

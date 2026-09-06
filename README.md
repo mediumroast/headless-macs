@@ -32,11 +32,28 @@ sudo ./headless-macs verify
 
 ### Interactive TUI
 
-![headless-macs main menu](images/Screenshot%203.jpg)
+> **Screenshots below are from the pre-Phase-10 flat-menu layout and are
+> now out of date** — the TUI is a persistent left sidebar plus a content
+> pane, not a full-screen menu you navigate into and back out of. They'll
+> be retaken; the text below describes the current layout.
 
-The TUI menu appears. Recommended run order:
+A persistent sidebar on the left lists every function (`d` Dashboard, `c`
+Edit Config, `p` Precheck, `t` Storage Setup, `b` System Baseline, `i`
+Install Tools, `v` Verify, `r` Restore, `u` Update Tools, `q` Quit) — it
+stays visible while the content pane on the right shows whatever you've
+selected. Below about 70 columns the sidebar collapses to an icon-only
+rail so the content pane keeps most of the width.
 
-| Step | Menu key | What it does |
+**Dashboard** (`d`, and the default view on launch) shows what's actually
+running right now — every managed daemon's state, PID, memory, and CPU%,
+plus live hardware telemetry (CPU/GPU power, temperature, memory) when
+`tools.macmon` is enabled. It also surfaces a nudge if this box was last
+configured by a different version of the binary than the one currently
+running, naming the command to re-run.
+
+Recommended run order the first time:
+
+| Step | Sidebar key | What it does |
 |---|---|---|
 | 1 | `p` | Precheck — read-only audit, no sudo needed |
 | 2 | `c` | Edit Config — enable tools, set storage options |
@@ -45,7 +62,8 @@ The TUI menu appears. Recommended run order:
 | 5 | `i` | Install Tools — daemons for enabled tools |
 | 6 | `v` | Verify — health check of everything installed |
 
-Press `q` at any time to return to the menu or quit.
+Press `q` from any content pane to return to the Dashboard; `q` again (or
+selecting Quit from the sidebar) exits the app.
 
 **Precheck** identifies hardware capability, security posture, prerequisites, and network readiness before any changes are made:
 
@@ -63,10 +81,16 @@ sudo headless-macs verify          # Health check
 sudo headless-macs update-tools    # In-place binary upgrades
 sudo headless-macs storage         # External volume setup
 sudo headless-macs restore         # Undo everything
+sudo headless-macs status          # What's running and what it's costing you
+sudo headless-macs status --watch  # Same, refreshing in place (same interval as the TUI Dashboard)
 
 sudo headless-macs --help          # Show all commands and options
 sudo headless-macs --version       # Print version and exit
 ```
+
+Every CLI invocation also prints a one-line `[INFO]` to stderr if this
+box was last configured by a different version of the binary than the one
+currently running — the same nudge the Dashboard shows.
 
 Output uses the same `[SET]`/`[SKIP]`/`[WARN]`/`[PASS]`/`[FAIL]` prefix convention as the v1 shell scripts, teed to `/var/log/mac-llm-setup/`. Exit codes: `0` = success, `1` = failures, `2` = warnings only.
 

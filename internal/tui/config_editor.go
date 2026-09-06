@@ -181,7 +181,7 @@ func (m *ConfigEditorModel) ensureVisible() {
 }
 
 func (m ConfigEditorModel) visibleRows() int {
-	return m.height - 5 // title(2) + divider(1) + status(2)
+	return m.height - 2 // cfgPath/state footer line(1) + padding(1)
 }
 
 func (m ConfigEditorModel) currentField() *field {
@@ -197,21 +197,48 @@ func (m ConfigEditorModel) isModified() bool {
 	return string(cur) != string(m.origJSON)
 }
 
+// StatusHints is the shell-level status bar's content while this screen
+// is the active content pane. The cfgPath/[modified]/[saved] indicator is
+// NOT here — it's the last line of Body() instead, since it's specific
+// information about this screen's state, not a generic key hint like
+// every other screen's status bar content.
+func (m ConfigEditorModel) StatusHints() string {
+	return strings.Join([]string{
+		hint("s", "save"),
+		hint("r", "reset"),
+		hint("q", "cancel"),
+		hint("↑↓", "navigate"),
+		hint("enter", "edit"),
+		hint("space", "toggle"),
+	}, statusGap())
+}
+
+// View reassembles a full-screen render for tea.Model conformance — not
+// how the shell actually renders this screen (it calls Body()/
+// StatusHints() directly).
 func (m ConfigEditorModel) View() string {
 	if m.width == 0 {
 		return "loading..."
 	}
-
-	w := m.width
 	var b strings.Builder
-
-	// Title
 	b.WriteString(styleTitle.Render(fmt.Sprintf(" headless-macs v%s — Configuration Editor ", Version)))
 	b.WriteByte('\n')
-	b.WriteString(styleDivider.Render(strings.Repeat("─", w)))
+	b.WriteString(styleDivider.Render(strings.Repeat("─", m.width)))
 	b.WriteByte('\n')
+	b.WriteString(m.Body())
+	b.WriteString(styleStatusBar.Render(m.StatusHints()))
+	return b.String()
+}
 
-	// Render all rows, apply scroll window
+// Body renders the scrollable field list plus the cfgPath/state footer
+// line, using its own stored width/height (set via the content-pane-sized
+// WindowSizeMsg the shell sends it — see app.go).
+func (m ConfigEditorModel) Body() string {
+	if m.width == 0 {
+		return "loading..."
+	}
+	var b strings.Builder
+
 	rows := m.renderRows()
 	visible := m.visibleRows()
 	if visible < 0 {
@@ -229,25 +256,10 @@ func (m ConfigEditorModel) View() string {
 		b.WriteString(row)
 		b.WriteByte('\n')
 	}
-	// Pad remaining lines
 	rendered := end - start
 	for i := rendered; i < visible; i++ {
 		b.WriteByte('\n')
 	}
-
-	// Status bar
-	b.WriteString(styleDivider.Render(strings.Repeat("─", w)))
-	b.WriteByte('\n')
-	hints := strings.Join([]string{
-		hint("s", "save"),
-		hint("r", "reset"),
-		hint("q", "cancel"),
-		hint("↑↓", "navigate"),
-		hint("enter", "edit"),
-		hint("space", "toggle"),
-	}, "  ")
-	b.WriteString(styleStatusBar.Render(hints))
-	b.WriteByte('\n')
 
 	cfgPath := config.UserConfigPath()
 	var stateStr string
@@ -256,7 +268,7 @@ func (m ConfigEditorModel) View() string {
 	} else {
 		stateStr = styleStatusSaved.Render("[saved]")
 	}
-	b.WriteString(styleStatusBar.Render(cfgPath + "  " + stateStr))
+	b.WriteString(styleFieldValue.Render("  "+cfgPath+"  ") + stateStr)
 
 	return b.String()
 }
@@ -297,15 +309,15 @@ func (m ConfigEditorModel) renderBoolRow(f field, selected bool) string {
 		check = "[✓]"
 	}
 	if selected {
-		return styleCursor.Render("▶ ") + styleSelectedLabel.Render(f.label) + " " + styleSelectedValue.Render(check)
+		return styleCursor.Render("▶ ") + styleSelectedLabel.Render(f.label) + styleSelectedValue.Render(" "+check)
 	}
-	return "  " + styleFieldLabel.Render(f.label) + " " + styleFieldValue.Render(check)
+	return "  " + styleFieldLabel.Render(f.label) + styleFieldValue.Render(" "+check)
 }
 
 func (m ConfigEditorModel) renderTextRow(f field, fi int, selected bool) string {
 	// If this field is currently being edited, show the textinput inline
 	if selected && m.editing {
-		label := styleCursor.Render("▶ ") + styleSelectedLabel.Render(f.label) + " "
+		label := styleCursor.Render("▶ ") + styleSelectedLabel.Render(f.label) + styleSelectedValue.Render(" ")
 		return label + m.textInput.View()
 	}
 
@@ -320,7 +332,7 @@ func (m ConfigEditorModel) renderTextRow(f field, fi int, selected bool) string 
 		} else {
 			valStyle = styleSelectedValue
 		}
-		return styleCursor.Render("▶ ") + styleSelectedLabel.Render(f.label) + " " + valStyle.Render(val)
+		return styleCursor.Render("▶ ") + styleSelectedLabel.Render(f.label) + valStyle.Render(" "+val)
 	}
 	var valStyle lipgloss.Style
 	if modified {
@@ -328,7 +340,7 @@ func (m ConfigEditorModel) renderTextRow(f field, fi int, selected bool) string 
 	} else {
 		valStyle = styleFieldValue
 	}
-	return "  " + styleFieldLabel.Render(f.label) + " " + valStyle.Render(val)
+	return "  " + styleFieldLabel.Render(f.label) + valStyle.Render(" "+val)
 }
 
 // origValue returns the value from the original (pre-edit) config for field at index fi.
@@ -367,6 +379,7 @@ func buildFields(cfg *config.Config) []field {
 	f = append(f, intField("Keep Alive (sec)", func() int { return cfg.Tools.Ollama.KeepAlive }, func(v int) { cfg.Tools.Ollama.KeepAlive = v }))
 	f = append(f, boolField("Flash Attention", func() bool { return cfg.Tools.Ollama.FlashAttention }, func(v bool) { cfg.Tools.Ollama.FlashAttention = v }))
 	f = append(f, intField("GPU Percent", func() int { return cfg.Tools.Ollama.GPUPercent }, func(v int) { cfg.Tools.Ollama.GPUPercent = v }))
+	f = append(f, strField("Log Level", func() string { return cfg.Tools.Ollama.LogLevel }, func(v string) { cfg.Tools.Ollama.LogLevel = v }))
 
 	f = append(f, field{kind: kindToolHeader, label: "Rapid-MLX"})
 	f = append(f, boolField("Enabled", func() bool { return cfg.Tools.RapidMLX.Enabled }, func(v bool) { cfg.Tools.RapidMLX.Enabled = v }))
@@ -404,6 +417,11 @@ func buildFields(cfg *config.Config) []field {
 			cfg.Tools.Exo.BootstrapPeers = strings.Split(v, ",")
 		}))
 
+	f = append(f, field{kind: kindToolHeader, label: "macmon"})
+	f = append(f, boolField("Enabled", func() bool { return cfg.Tools.Macmon.Enabled }, func(v bool) { cfg.Tools.Macmon.Enabled = v }))
+	f = append(f, intField("Port", func() int { return cfg.Tools.Macmon.Port }, func(v int) { cfg.Tools.Macmon.Port = v }))
+	f = append(f, intField("Interval (ms)", func() int { return cfg.Tools.Macmon.IntervalMs }, func(v int) { cfg.Tools.Macmon.IntervalMs = v }))
+
 	// ── STORAGE ───────────────────────────────────────────────
 	f = append(f, field{kind: kindSectionHeader, label: "STORAGE"})
 	f = append(f, boolField("Use External Volume", func() bool { return cfg.Storage.UseExternalVolume }, func(v bool) { cfg.Storage.UseExternalVolume = v }))
@@ -431,6 +449,10 @@ func buildFields(cfg *config.Config) []field {
 	f = append(f, field{kind: kindSectionHeader, label: "NETWORK"})
 	f = append(f, boolField("Localhost Only", func() bool { return cfg.Network.LocalhostOnly }, func(v bool) { cfg.Network.LocalhostOnly = v }))
 	f = append(f, boolField("Disable Firewall", func() bool { return cfg.Network.DisableFirewall }, func(v bool) { cfg.Network.DisableFirewall = v }))
+
+	// ── TUI ───────────────────────────────────────────────────
+	f = append(f, field{kind: kindSectionHeader, label: "TUI"})
+	f = append(f, intField("Dashboard Refresh (ms)", func() int { return cfg.TUI.DashboardRefreshMs }, func(v int) { cfg.TUI.DashboardRefreshMs = v }))
 
 	return f
 }

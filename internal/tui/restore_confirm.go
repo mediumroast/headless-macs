@@ -43,13 +43,29 @@ func (m RestoreConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// StatusHints is the shell-level status bar's content while this screen
+// is the active content pane.
+func (m RestoreConfirmModel) StatusHints() string {
+	return hint("y", "confirm and run restore") + statusGap() + hint("any other key", "cancel")
+}
+
+// View reassembles a full-screen render for tea.Model conformance — not
+// how the shell actually renders this screen (it calls Body()/
+// StatusHints() directly).
 func (m RestoreConfirmModel) View() string {
 	var b strings.Builder
-
 	b.WriteString(styleTitle.Render(fmt.Sprintf(" headless-macs v%s — Restore ", Version)))
 	b.WriteByte('\n')
 	b.WriteString(styleDivider.Render(strings.Repeat("─", max(m.width, 40))))
 	b.WriteByte('\n')
+	b.WriteString(m.Body())
+	b.WriteString(styleStatusBar.Render(m.StatusHints()))
+	return b.String()
+}
+
+// Body renders the warning block.
+func (m RestoreConfirmModel) Body() string {
+	var b strings.Builder
 	b.WriteByte('\n')
 
 	b.WriteString(styleError.Render("  ⚠  This will undo all changes made by headless-macs:"))
@@ -77,12 +93,6 @@ func (m RestoreConfirmModel) View() string {
 	b.WriteByte('\n')
 	b.WriteString(styleFieldModified.Render("  A reboot is recommended after restore completes."))
 	b.WriteByte('\n')
-	b.WriteByte('\n')
-	b.WriteString(styleDivider.Render(strings.Repeat("─", max(m.width, 40))))
-	b.WriteByte('\n')
-	b.WriteString(styleStatusBar.Render(
-		hint("y", "confirm and run restore") + "  " + hint("any other key", "cancel"),
-	))
 
 	return b.String()
 }

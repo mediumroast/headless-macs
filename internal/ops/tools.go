@@ -134,6 +134,7 @@ func RunTools(cfg *config.Config) (*ToolsResult, error) {
 
 	r.installLogRotate()
 
+	WriteVersionMarker()
 	ilog.Info(fmt.Sprintf("Log written to: %s", logPath))
 	return r, nil
 }

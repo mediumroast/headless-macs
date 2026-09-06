@@ -96,6 +96,7 @@ func RunBaseline(cfg *config.Config, opts BaselineOptions) (*BaselineResult, err
 	r.sectionMaxfiles()
 
 	r.printSummary()
+	WriteVersionMarker()
 	ilog.Info(fmt.Sprintf("Log written to: %s", logPath))
 	return r, nil
 }

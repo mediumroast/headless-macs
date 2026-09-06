@@ -2,11 +2,22 @@
 
 Configure an Apple Silicon Mac as a production-grade LLM inference node — all from a single interactive TUI binary.
 
-**v2.1.1** replaces the bash pipeline with a Go binary (`headless-macs`) that runs precheck, storage setup, system baseline, tool installation, health check, restore, and update — interactively via TUI or non-interactively via CLI subcommands. The shell scripts remain in the repo for reference but are no longer maintained.
+**v2.2.0** replaces the bash pipeline with a Go binary (`headless-macs`) that runs precheck, storage setup, system baseline, tool installation, health check, restore, and update — interactively via TUI or non-interactively via CLI subcommands. The shell scripts remain in the repo for reference but are no longer maintained.
 
 **Supported tools:** Ollama · Rapid-MLX · mlx-lm · Infinity · Exo
 
 **Requires:** Apple Silicon (M1 or later) · macOS 15 Sequoia or 26 Tahoe · Homebrew · Go 1.22+
+
+> **Security scope — this is a home-lab / trusted-network tool.** Every
+> serving daemon here (Ollama, Rapid-MLX, mlx-lm, Infinity, Exo, macmon)
+> binds plain HTTP with no built-in authentication or TLS, and
+> `headless-macs` does not add either. That's a reasonable fit for a Mac
+> serving models to other machines on your own private LAN — the
+> documented, intended use case — but nothing here is safe to expose to
+> the public internet or an untrusted network as configured. Fronting the
+> stack with a reverse proxy (Caddy is the leading candidate — automatic
+> TLS, trivial config) is a real, tracked gap, not yet built — see
+> [`FUTURES.md`](FUTURES.md) for the design sketch.
 
 ---
 
@@ -166,7 +177,7 @@ See [`docs/tool-comparison.md`](docs/tool-comparison.md) for a full comparison.
 > does not adjust the tuning for you. See `docs/tool-comparison.md` for
 > details.
 
-> **Network defaults:** Services bind to `localhost` (`127.0.0.1`) by default and the firewall is left enabled. Set `"localhost_only": false` to allow LAN clients. If you run unsigned Python services (Rapid-MLX, mlx-lm, Infinity) and cannot manage per-app firewall rules, also set `"disable_firewall": true` — only do this on an isolated trusted network.
+> **Network defaults:** Services bind to `localhost` (`127.0.0.1`) by default and the firewall is left enabled. Set `"localhost_only": false` to allow LAN clients. If you run unsigned Python services (Rapid-MLX, mlx-lm, Infinity) and cannot manage per-app firewall rules, also set `"disable_firewall": true` — only do this on an isolated trusted network. None of this adds authentication or TLS to the tools themselves — see the security-scope note above and [`FUTURES.md`](FUTURES.md).
 
 > **macmon binding:** the Homebrew-installed `macmon` build has not
 > consistently shipped a `--host`/`--bind` flag. `headless-macs` detects

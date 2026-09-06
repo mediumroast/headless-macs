@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -48,6 +49,11 @@ Logs:   /var/log/mac-llm-setup/
 `
 
 func main() {
+	// git describe (what the Makefile injects) already carries the tag's
+	// own "v" prefix, e.g. "v2.1.1-18-g5c1cab9" — every display site below
+	// and in internal/tui adds its own literal "v", so strip it here once
+	// rather than fixing it in six places that each assumed a bare number.
+	version = strings.TrimPrefix(version, "v")
 	ops.Version = version
 	tui.Version = version
 
@@ -58,7 +64,7 @@ func main() {
 			os.Exit(0)
 		}
 		if a == "--version" {
-			fmt.Println("headless-macs " + version)
+			fmt.Println("headless-macs v" + version)
 			os.Exit(0)
 		}
 	}
@@ -252,7 +258,7 @@ func runStatusCLI(cfg *config.Config, watch bool) {
 }
 
 func printStatus(r *ops.StatusResult) {
-	fmt.Printf("headless-macs %s — status at %s\n\n", version, time.Now().Format(time.RFC1123))
+	fmt.Printf("headless-macs v%s — status at %s\n\n", version, time.Now().Format(time.RFC1123))
 	for _, d := range r.Daemons {
 		if d.Running {
 			fmt.Printf("[UP]   %-32s PID %-8d %8s  %5.1f%%\n",
@@ -297,7 +303,7 @@ func printVersionNudge() {
 		return
 	}
 	if marker == nil {
-		fmt.Fprintf(os.Stderr, "[INFO] This box has never had 'baseline'/'install-tools' run under version %s — run them to apply current fixes.\n", version)
+		fmt.Fprintf(os.Stderr, "[INFO] This box has never had 'baseline'/'install-tools' run under version v%s — run them to apply current fixes.\n", version)
 		return
 	}
 	fmt.Fprintf(os.Stderr, "[INFO] Running v%s, but this box was last configured by v%s — re-run 'sudo headless-macs baseline' / 'install-tools' to pick up fixes since then.\n",

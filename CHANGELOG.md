@@ -69,6 +69,14 @@ structure redesign (sidebar + Dashboard) and version-injection fix.
   the new upgrade-nudge feature below (it compares versions by string
   equality). Fixed: `version` is now a `var`, and the Makefile computes it
   from `git describe --tags --always --dirty` at build time
+- **Version string displayed as `vv2.1.1-...`** — `git describe --tags`
+  (what the Makefile injects) already includes the tag's own `v` prefix,
+  but every display site (all five TUI title bars plus the CLI's upgrade
+  nudge and `status` header) also hardcoded a literal `v` in front of it.
+  Found by inspecting real screenshots from doppio-2 after the version-var
+  fix above. Fixed by stripping a leading `v` once in `main()` before
+  assigning to `ops.Version`/`tui.Version`, so every existing `v%s` call
+  site now renders correctly instead of needing six separate edits
 - **The TUI's background didn't paint the app's own colors** — most style
   tokens set only a foreground color, so whatever showed behind the text
   was the terminal emulator's own theme, not `colBg` as
@@ -164,6 +172,12 @@ structure redesign (sidebar + Dashboard) and version-injection fix.
   **`tools.exo.bootstrap_peers`** (array of strings) — the former mapped to
   a `--discovery-module` flag that never existed in exo's CLI, so no
   working config could have depended on it
+- **README screenshots retaken** on real hardware (doppio-2, Terminal.app)
+  showing the actual Phase 10 sidebar + Dashboard shell — Dashboard, Edit
+  Config, Precheck, System Baseline, Storage Setup, Verify, and Update
+  Tools. The old pre-Phase-10 flat-menu screenshots (`images/Screenshot
+  {1,2,3}.jpg`) are removed rather than kept alongside, since they no
+  longer match any current screen
 
 ### Upgrading an existing install
 

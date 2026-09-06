@@ -326,6 +326,22 @@ direct consequence of it.
 **Files touched:** `cmd/headless-macs/main.go` (`const` → `var`), `Makefile`
 (`VERSION`/`GOFLAGS`)
 
+**Follow-up bug, found from real screenshots after implementation:**
+`git describe --tags` already includes the tag's own `v` (e.g.
+`v2.1.1-18-g5c1cab9`), which is why the `--version`/`make build` check
+above looked correct — `fmt.Println("headless-macs " + version)` never
+added a second `v`. But every *other* display site did add a literal `v`
+in front, assuming `version` was a bare number: all five TUI title bars
+(`app.go`, `config_editor.go`, `precheck_screen.go`, `run_screen.go`,
+`restore_confirm.go`) and two lines in `printVersionNudge()`/
+`printStatus()` in `main.go`. The result, `vv2.1.1-18-g5c1cab9`, is
+visible in the doppio-2 screenshots taken for Phase 10F. Fixed by
+normalizing once — `version = strings.TrimPrefix(version, "v")` right
+after `main()` reads the linker-injected value — and adding the `v` back
+explicitly at the two `main.go` sites that had relied on it being
+already present (`--version`'s output, and `printStatus`'s header). The
+five TUI sites needed no change; they already assumed a bare version.
+
 ---
 
 ### Phase 10-Shell — Sidebar + content-pane app shell
@@ -559,21 +575,33 @@ directly).
 
 - [x] `README.md`: rewrote the "Interactive TUI" section for the
       sidebar+Dashboard shape; added `status [--watch]` to the CLI
-      subcommand list with a note about the version-nudge stderr line;
-      added the explicit note that the existing screenshots are stale
-      (see below)
+      subcommand list with a note about the version-nudge stderr line
 - [x] `CLAUDE.md`: added `internal/ops/status.go` and
       `internal/ops/versionmarker.go` rows to the ops-package table.
       (There is no separate `shell.go` — the shell lives in the existing
       `internal/tui/app.go`, so no row was needed for that.)
-- [ ] **New TUI screenshots — NOT done.** This environment has no real
-      terminal to capture from (all verification here was synthetic
-      Go-test ANSI-byte inspection, not visual rendering — see Phase
-      10-Paint). `README.md` states plainly that its screenshots are
-      stale rather than showing fabricated/incorrect ones. Retaking them
-      needs a real terminal session on actual hardware.
+- [x] **New TUI screenshots — done, on real hardware (doppio-2,
+      Terminal.app), after Terminal.app's own theme was confirmed to
+      render `colBg` correctly** (Termius' rendering had been suspect —
+      see Phase 10-Paint). Seven screens captured: Dashboard, Edit Config,
+      Precheck, System Baseline, Storage Setup, Verify, Update Tools —
+      `images/dashboard.jpg`, `edit_config.jpg`, `preview.jpg`,
+      `baseline.jpg`, `storage.jpg`, `verify.jpg`, `update.jpg`. The old
+      pre-Phase-10 flat-menu screenshots (`images/Screenshot {1,2,3}.jpg`)
+      are removed, not kept alongside — none of them match any current
+      screen. **These real screenshots caught a genuine bug the synthetic
+      tests couldn't**: every title bar and the CLI's version-nudge line
+      showed `vv2.1.1-18-g5c1cab9` (double `v`) — `git describe --tags`
+      already includes the tag's own `v`, and `main.go`/`internal/tui`'s
+      display code each added a second one. Fixed in `main.go` by
+      stripping a leading `v` once, right after the var is set, rather
+      than in the six separate `v%s` call sites — see Phase 10-Version's
+      note below. The committed screenshots still show the un-fixed
+      `vv...` string, since they predate the fix and doppio-2 hasn't
+      rebuilt since; cosmetic only, not worth re-taking for one character.
 
-**Files touched:** `README.md`, `CLAUDE.md`
+**Files touched:** `README.md`, `CLAUDE.md`, `CHANGELOG.md`,
+`cmd/headless-macs/main.go` (double-`v` fix), `images/` (7 new, 3 removed)
 
 ---
 

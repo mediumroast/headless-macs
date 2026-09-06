@@ -32,11 +32,6 @@ sudo ./headless-macs verify
 
 ### Interactive TUI
 
-> **Screenshots below are from the pre-Phase-10 flat-menu layout and are
-> now out of date** — the TUI is a persistent left sidebar plus a content
-> pane, not a full-screen menu you navigate into and back out of. They'll
-> be retaken; the text below describes the current layout.
-
 A persistent sidebar on the left lists every function (`d` Dashboard, `c`
 Edit Config, `p` Precheck, `t` Storage Setup, `b` System Baseline, `i`
 Install Tools, `v` Verify, `r` Restore, `u` Update Tools, `q` Quit) — it
@@ -47,9 +42,13 @@ rail so the content pane keeps most of the width.
 **Dashboard** (`d`, and the default view on launch) shows what's actually
 running right now — every managed daemon's state, PID, memory, and CPU%,
 plus live hardware telemetry (CPU/GPU power, temperature, memory) when
-`tools.macmon` is enabled. It also surfaces a nudge if this box was last
-configured by a different version of the binary than the one currently
-running, naming the command to re-run.
+`tools.macmon` is enabled. It refreshes on an interval set by
+`tui.dashboard_refresh_ms` in `config.json` (default 2000ms), and
+surfaces a nudge if this box was last configured by a different version
+of the binary than the one currently running, naming the command to
+re-run.
+
+![Dashboard screen showing running daemons and live hardware telemetry](images/dashboard.jpg)
 
 Recommended run order the first time:
 
@@ -67,7 +66,28 @@ selecting Quit from the sidebar) exits the app.
 
 **Precheck** identifies hardware capability, security posture, prerequisites, and network readiness before any changes are made:
 
-![Precheck screen on a Mac Mini M4 Max with 128 GB RAM](images/Screenshot%201.jpg)
+![Precheck screen on a Mac Mini M4 Pro with 64 GB RAM](images/preview.jpg)
+
+**Edit Config** exposes every tool's settings — including the newer
+`macmon` telemetry toggle and the Dashboard's own refresh interval —
+without hand-editing `config.json`:
+
+![Configuration editor showing tool settings, macmon, and TUI fields](images/edit_config.jpg)
+
+**System Baseline** applies pmset, sysctl, service-suppression, and SSH
+settings, reporting exactly what changed and what was already correct:
+
+![System Baseline run showing applied and skipped settings](images/baseline.jpg)
+
+**Storage Setup** locates, validates, and wires up an external volume for
+model storage — ownership, symlinks, fstab, and a re-mount LaunchDaemon:
+
+![Storage Setup run showing volume validation and symlink setup](images/storage.jpg)
+
+**Update Tools** upgrades each enabled serving tool's binary in place and
+re-verifies its API responds afterward:
+
+![Update Tools run showing an Ollama version upgrade](images/update.jpg)
 
 ### Headless / CLI mode
 
@@ -215,7 +235,7 @@ sudo ./headless-macs    # → v (Verify)
 
 **Verify** checks every installed component and reports pass/warn/fail across system, network, storage, and each enabled serving tool:
 
-![Verify screen showing 29 checks passed on a configured node](images/Screenshot%202.jpg)
+![Verify screen showing 36 checks passed, 4 warnings on a configured node](images/verify.jpg)
 
 See [`docs/ram-sizing.md`](docs/ram-sizing.md) for full model recommendations by hardware tier.
 

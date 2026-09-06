@@ -137,27 +137,46 @@ func (m PrecheckModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m PrecheckModel) visibleRows() int {
-	v := m.height - 9 // title(2) + indicator(1) + summary(2) + log(1) + status(1) + padding(2)
+	v := m.height - 6 // indicator-above(1) + indicator-below(1) + divider(1) + summary(1) + log(1) + padding(1)
 	if v < 1 {
 		v = 1
 	}
 	return v
 }
 
+// StatusHints is the shell-level status bar's content while this screen
+// is the active content pane.
+func (m PrecheckModel) StatusHints() string {
+	return hint("↑↓/PgUp/PgDn", "scroll") + statusGap() + hint("q", "back to menu")
+}
+
+// View reassembles a full-screen render (title + Body + status bar) for
+// tea.Model conformance — not how the shell actually renders this screen
+// (it calls Body()/StatusHints() directly), but kept correct so this type
+// still stands alone if ever used outside the shell.
 func (m PrecheckModel) View() string {
 	var b strings.Builder
-
 	b.WriteString(styleTitle.Render(fmt.Sprintf(" headless-macs v%s — %s ", Version, m.title)))
 	b.WriteByte('\n')
 	b.WriteString(styleDivider.Render(strings.Repeat("─", max(m.width, 40))))
 	b.WriteByte('\n')
+	b.WriteString(m.Body())
+	b.WriteString(styleStatusBar.Render(m.StatusHints()))
+	return b.String()
+}
+
+// Body renders the scrollable check list, using its own stored
+// width/height (set via the content-pane-sized WindowSizeMsg the shell
+// sends it — see app.go).
+func (m PrecheckModel) Body() string {
+	var b strings.Builder
 
 	if m.state == precheckRunning {
 		running := "Running system audit… (read-only, no changes made)"
 		if m.title == "Verify" {
 			running = "Running health check… (read-only, requires sudo)"
 		}
-		b.WriteString("\n  " + m.spinner.View() + "  " + running + "\n")
+		b.WriteString("\n  " + m.spinner.View() + styleFieldValue.Render("  "+running) + "\n")
 		return b.String()
 	}
 
@@ -228,9 +247,6 @@ func (m PrecheckModel) View() string {
 		}
 	}
 
-	b.WriteString(styleStatusBar.Render(
-		hint("↑↓/PgUp/PgDn", "scroll") + "  " + hint("q", "back to menu"),
-	))
 	return b.String()
 }
 
@@ -259,6 +275,19 @@ func (m PrecheckModel) renderChecks() []string {
 	if items == nil {
 		return nil
 	}
+	// MaxWidth on the message/detail text specifically (budgeted for their
+	// prefix's width) — confirmed by direct experiment (see dashboard.go)
+	// that an unconstrained long line, like the long ssh fix commands this
+	// project's own Verify output produces, overflows the content pane and
+	// breaks alignment with the sidebar. maxW<=0 (no WindowSizeMsg yet)
+	// falls back to a generous width rather than truncating to nothing.
+	maxW := m.width
+	if maxW <= 0 {
+		maxW = 200
+	}
+	msgW := maxW - 9     // "  [PASS] " etc.
+	detailW := maxW - 14 // "         Fix: "
+
 	rows := make([]string, 0, len(items))
 	currentSection := ""
 
@@ -277,25 +306,25 @@ func (m PrecheckModel) renderChecks() []string {
 		switch c.Status {
 		case ops.StatusOK:
 			prefix = "  [PASS] "
-			valStyle = func(s string) string { return styleFieldValue.Render(s) }
+			valStyle = func(s string) string { return styleFieldValue.MaxWidth(msgW).Render(s) }
 		case ops.StatusWarn:
 			prefix = "  [WARN] "
-			valStyle = func(s string) string { return styleFieldModified.Render(s) }
+			valStyle = func(s string) string { return styleFieldModified.MaxWidth(msgW).Render(s) }
 		case ops.StatusBlocker:
 			if m.title == "Verify" {
 				prefix = "  [FAIL] "
 			} else {
 				prefix = "  [BLOK] "
 			}
-			valStyle = func(s string) string { return styleError.Render(s) }
+			valStyle = func(s string) string { return styleError.MaxWidth(msgW).Render(s) }
 		default:
 			prefix = "  [INFO] "
-			valStyle = func(s string) string { return styleKeyHint.Render(s) }
+			valStyle = func(s string) string { return styleKeyHint.MaxWidth(msgW).Render(s) }
 		}
 
 		rows = append(rows, styleKeyHint.Render(prefix)+valStyle(c.Message))
 		if c.Detail != "" {
-			rows = append(rows, styleKeyHint.Render("         Fix: ")+styleFieldModified.Render(c.Detail))
+			rows = append(rows, styleKeyHint.Render("         Fix: ")+styleFieldModified.MaxWidth(detailW).Render(c.Detail))
 		}
 	}
 	return rows

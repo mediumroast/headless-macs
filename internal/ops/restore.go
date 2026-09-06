@@ -112,6 +112,8 @@ func (r *RestoreResult) sectionRemoveDaemons() {
 		{"/Library/LaunchDaemons/com.llm-server.maxfiles.plist", "com.llm-server.maxfiles"},
 		{"/Library/LaunchDaemons/com.llm-server.pmset-heal.plist", "com.llm-server.pmset-heal"},
 		{"/Library/LaunchDaemons/com.llm-server.storage-mount.plist", "com.llm-server.storage-mount"},
+		{logrotatePlistPath, "com.llm-server.logrotate"},
+		{"/Library/LaunchDaemons/com.llm-server.macmon.plist", "com.llm-server.macmon"},
 	}
 
 	for _, d := range daemons {
@@ -124,6 +126,23 @@ func (r *RestoreResult) sectionRemoveDaemons() {
 		}
 		// Belt-and-suspenders: disable by label even if plist is gone
 		_ = exec.Command("launchctl", "disable", "system/"+d.label).Run()
+	}
+
+	// logrotate config (not a daemon, but installed alongside com.llm-server.logrotate)
+	if _, err := os.Stat(logrotateConfigPath); err == nil {
+		os.Remove(logrotateConfigPath)
+		r.add(sec, ActionSet, "Removed "+logrotateConfigPath, "")
+	} else {
+		r.add(sec, ActionSkip, logrotateConfigPath+" (not present)", "")
+	}
+
+	// macmon logs — daemon itself is removed above; does not brew uninstall
+	// macmon, matching how Restore treats every other tool's package.
+	if _, err := os.Stat("/var/log/macmon"); err == nil {
+		os.RemoveAll("/var/log/macmon")
+		r.add(sec, ActionSet, "Removed /var/log/macmon", "")
+	} else {
+		r.add(sec, ActionSkip, "/var/log/macmon (not present)", "")
 	}
 
 	// Exo LaunchAgent (user-level)
@@ -174,6 +193,24 @@ func (r *RestoreResult) sectionRestorePmset() {
 
 func (r *RestoreResult) sectionRestoreServices() {
 	sec := "SERVICES"
+
+	// Explicit floor for Phase 8's five suppressions (phase8Suppressions,
+	// shared with baseline.go — see there for why), independent of the
+	// snapshot-based restore below. The snapshot only captures the
+	// disable-override state at whatever moment the *most recent* Baseline
+	// run started — if an earlier Baseline run already suppressed these
+	// before that snapshot was taken, the snapshot would show them as
+	// already-disabled and the generic restore below would (correctly, by
+	// its own logic, but not what we want here) leave them alone.
+	// Re-enabling an already-enabled service is a harmless no-op.
+	for _, svc := range phase8Suppressions {
+		domain := "system/" + svc.Label
+		if exec.Command("launchctl", "enable", domain).Run() == nil {
+			r.add(sec, ActionSet, "Re-enabled: "+domain, "")
+		} else {
+			r.add(sec, ActionSkip, domain+" (may not exist on this macOS version)", "")
+		}
+	}
 
 	snapshotDir := "/var/log/mac-llm-setup/snapshots"
 	entries, err := os.ReadDir(snapshotDir)

@@ -15,6 +15,16 @@ type Config struct {
 	Storage Storage `json:"storage"`
 	System  System  `json:"system"`
 	Network Network `json:"network"`
+	TUI     TUI     `json:"tui"`
+}
+
+// TUI holds settings for the interactive terminal UI itself, as opposed
+// to anything it manages. Added for the Dashboard screen (Phase 10).
+type TUI struct {
+	// DashboardRefreshMs is how often the Dashboard screen re-fetches
+	// daemon/hardware status, in milliseconds. 0 (unset) means the
+	// built-in default (2000ms).
+	DashboardRefreshMs int `json:"dashboard_refresh_ms"`
 }
 
 type Tools struct {
@@ -23,6 +33,7 @@ type Tools struct {
 	MLXLM    MLXLMTool    `json:"mlx_lm"`
 	Infinity InfinityTool `json:"infinity"`
 	Exo      ExoTool      `json:"exo"`
+	Macmon   MacmonTool   `json:"macmon"`
 }
 
 type OllamaTool struct {
@@ -32,6 +43,7 @@ type OllamaTool struct {
 	KeepAlive      int    `json:"keep_alive"`
 	FlashAttention bool   `json:"flash_attention"`
 	GPUPercent     int    `json:"gpu_percent"`
+	LogLevel       string `json:"log_level"`
 }
 
 type RapidMLXTool struct {
@@ -62,9 +74,27 @@ type InfinityTool struct {
 }
 
 type ExoTool struct {
-	Enabled          bool `json:"enabled"`
-	ChatGPTAPIPort   int  `json:"chatgpt_api_port"`
-	DiscoveryModule  string `json:"discovery_module"`
+	Enabled bool `json:"enabled"`
+	// ChatGPTAPIPort maps to exo's real --api-port flag (the JSON key name
+	// is kept for config compatibility — it's still the port serving exo's
+	// OpenAI/ChatGPT-compatible API).
+	ChatGPTAPIPort int `json:"chatgpt_api_port"`
+	// BootstrapPeers maps to exo's --bootstrap-peers flag (comma-separated
+	// libp2p multiaddrs of other nodes to dial on startup). Empty means a
+	// single-node exo instance. Replaces the former discovery_module field,
+	// which mapped to a --discovery-module flag that does not exist in any
+	// current exo release — see PHASE_7_PLAN.md history.
+	BootstrapPeers []string `json:"bootstrap_peers"`
+}
+
+// MacmonTool configures the macmon hardware telemetry daemon
+// (com.llm-server.macmon) — CPU/GPU/ANE power, temperature, and memory
+// stats over HTTP. Not a serving/inference tool; opt-in, disabled by
+// default. See PHASE_9_PLAN.md.
+type MacmonTool struct {
+	Enabled    bool `json:"enabled"`
+	Port       int  `json:"port"`
+	IntervalMs int  `json:"interval_ms"`
 }
 
 type Storage struct {

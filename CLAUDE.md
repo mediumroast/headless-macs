@@ -28,6 +28,8 @@ internal/ops/tools.go       RunTools()          — serving stack installation
 internal/ops/verify.go      RunVerify()         — health check
 internal/ops/restore.go     RunRestore()        — undo all changes
 internal/ops/update.go      RunUpdateTools()    — in-place binary upgrade
+internal/ops/status.go      RunStatus()         — daemon state + resource use (Dashboard/CLI status)
+internal/ops/versionmarker.go  WriteVersionMarker()/VersionMismatch() — upgrade-awareness nudge
 ```
 
 The TUI (`internal/tui/`) presents these as screens in a Bubble Tea app. All ops functions are Go-native — they do not shell out to the bash scripts.
@@ -146,13 +148,33 @@ sudo launchctl bootout   system "$PLIST"   # stop and uninstall
 
 ### Idempotency guard for infrastructure daemons
 
-```bash
-if [[ ! -f "$PLIST_PATH" ]]; then
-  # write plist, chown, chmod, bootstrap
-else
-  echo "[SKIP] <label> already installed"
-fi
+Compare generated content against what's on disk — not just whether the
+plist file exists. An existence-only check can never pick up a content
+change in a later version of the code: the file "exists," so the guard
+skips forever, even after the generator's output changes. (Found the hard
+way in Phase 7: `installLogRotate()`'s existence check meant an Exo
+log-rotation stanza added later in the same phase would never reach a box
+that had already run `install-tools`.) Reload (`bootout` then `bootstrap`)
+only when content actually changed — never on every run.
+
+```go
+existing, err := os.ReadFile(plistPath)
+freshInstall := os.IsNotExist(err)
+if err == nil && string(existing) == content {
+    // [SKIP] <label> already installed and up to date
+    return
+}
+// write plist, chown, chmod
+if !freshInstall {
+    _ = runCmd("launchctl", "bootout", "system", plistPath) // reload, not bootstrap-over-loaded
+}
+_ = runCmd("launchctl", "bootstrap", "system", plistPath)
+// [SET] <label> installed and started   (fresh)
+// [SET] <label> content changed — reloaded   (updated)
 ```
+
+The old bash pipeline's `if [[ ! -f "$PLIST_PATH" ]]` existence check is
+deprecated along with the scripts that used it — do not port it forward.
 
 ### Log directories
 
@@ -385,3 +407,6 @@ gh release list
 | v1.1.0 | 2026-06-10 | Phase 4: Modelfile system, KV cache model, Zoo Code (PR #2) |
 | v1.2.0 | 2026-06-11 | Phase 5: Security hardening, operational improvements, Ollama lifecycle (PR #3) |
 | v2.0.0 | 2026-08-15 | Phase 6: Go rewrite — TUI binary replaces shell pipeline (PR #4) |
+| v2.1.0 | 2026-08-15 | Post-launch fixes and CLI headless support found on doppio-1 (PR #4) |
+| v2.1.1 | 2026-08-15 | Fix: TUI version string and `.gitignore` pattern (PR #5) |
+| v2.2.0 | 2026-09-06 | Phases 7–10: log management, service suppression, macmon, TUI/CLI restructure (PR #6) |

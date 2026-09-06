@@ -2,11 +2,22 @@
 
 Configure an Apple Silicon Mac as a production-grade LLM inference node — all from a single interactive TUI binary.
 
-**v2.1.1** replaces the bash pipeline with a Go binary (`headless-macs`) that runs precheck, storage setup, system baseline, tool installation, health check, restore, and update — interactively via TUI or non-interactively via CLI subcommands. The shell scripts remain in the repo for reference but are no longer maintained.
+**v2.2.0** replaces the bash pipeline with a Go binary (`headless-macs`) that runs precheck, storage setup, system baseline, tool installation, health check, restore, and update — interactively via TUI or non-interactively via CLI subcommands. The shell scripts remain in the repo for reference but are no longer maintained.
 
 **Supported tools:** Ollama · Rapid-MLX · mlx-lm · Infinity · Exo
 
 **Requires:** Apple Silicon (M1 or later) · macOS 15 Sequoia or 26 Tahoe · Homebrew · Go 1.22+
+
+> **Security scope — this is a home-lab / trusted-network tool.** Every
+> serving daemon here (Ollama, Rapid-MLX, mlx-lm, Infinity, Exo, macmon)
+> binds plain HTTP with no built-in authentication or TLS, and
+> `headless-macs` does not add either. That's a reasonable fit for a Mac
+> serving models to other machines on your own private LAN — the
+> documented, intended use case — but nothing here is safe to expose to
+> the public internet or an untrusted network as configured. Fronting the
+> stack with a reverse proxy (Caddy is the leading candidate — automatic
+> TLS, trivial config) is a real, tracked gap, not yet built — see
+> [`FUTURES.md`](FUTURES.md) for the design sketch.
 
 ---
 
@@ -32,11 +43,27 @@ sudo ./headless-macs verify
 
 ### Interactive TUI
 
-![headless-macs main menu](images/Screenshot%203.jpg)
+A persistent sidebar on the left lists every function (`d` Dashboard, `c`
+Edit Config, `p` Precheck, `t` Storage Setup, `b` System Baseline, `i`
+Install Tools, `v` Verify, `r` Restore, `u` Update Tools, `q` Quit) — it
+stays visible while the content pane on the right shows whatever you've
+selected. Below about 70 columns the sidebar collapses to an icon-only
+rail so the content pane keeps most of the width.
 
-The TUI menu appears. Recommended run order:
+**Dashboard** (`d`, and the default view on launch) shows what's actually
+running right now — every managed daemon's state, PID, memory, and CPU%,
+plus live hardware telemetry (CPU/GPU power, temperature, memory) when
+`tools.macmon` is enabled. It refreshes on an interval set by
+`tui.dashboard_refresh_ms` in `config.json` (default 2000ms), and
+surfaces a nudge if this box was last configured by a different version
+of the binary than the one currently running, naming the command to
+re-run.
 
-| Step | Menu key | What it does |
+![Dashboard screen showing running daemons and live hardware telemetry](images/dashboard.jpg)
+
+Recommended run order the first time:
+
+| Step | Sidebar key | What it does |
 |---|---|---|
 | 1 | `p` | Precheck — read-only audit, no sudo needed |
 | 2 | `c` | Edit Config — enable tools, set storage options |
@@ -45,15 +72,51 @@ The TUI menu appears. Recommended run order:
 | 5 | `i` | Install Tools — daemons for enabled tools |
 | 6 | `v` | Verify — health check of everything installed |
 
-Press `q` at any time to return to the menu or quit.
+Press `q` from any content pane to return to the Dashboard; `q` again (or
+selecting Quit from the sidebar) exits the app.
 
 **Precheck** identifies hardware capability, security posture, prerequisites, and network readiness before any changes are made:
 
-![Precheck screen on a Mac Mini M4 Max with 128 GB RAM](images/Screenshot%201.jpg)
+![Precheck screen on a Mac Mini M4 Pro with 64 GB RAM](images/preview.jpg)
+
+**Edit Config** exposes every tool's settings — including the newer
+`macmon` telemetry toggle and the Dashboard's own refresh interval —
+without hand-editing `config.json`:
+
+![Configuration editor showing tool settings, macmon, and TUI fields](images/edit_config.jpg)
+
+**System Baseline** applies pmset, sysctl, service-suppression, and SSH
+settings, reporting exactly what changed and what was already correct:
+
+![System Baseline run showing applied and skipped settings](images/baseline.jpg)
+
+**Storage Setup** locates, validates, and wires up an external volume for
+model storage — ownership, symlinks, fstab, and a re-mount LaunchDaemon:
+
+![Storage Setup run showing volume validation and symlink setup](images/storage.jpg)
+
+**Update Tools** upgrades each enabled serving tool's binary in place and
+re-verifies its API responds afterward:
+
+![Update Tools run showing an Ollama version upgrade](images/update.jpg)
 
 ### Headless / CLI mode
 
-Every operation is available as a subcommand for scripting, cron, or remote SSH automation:
+Every TUI function except Edit Config is available as a subcommand for scripting, cron, or remote SSH automation — there's no CLI flag for changing config values (that's what `config.json`/the TUI editor are for), just for running the operations themselves:
+
+| Sidebar key | Function | CLI equivalent |
+|---|---|---|
+| `d` | Dashboard | `status` (`--watch` for the same live refresh) |
+| `p` | Precheck | `precheck` |
+| `t` | Storage Setup | `storage` |
+| `b` | System Baseline | `baseline` |
+| `i` | Install Tools | `install-tools` |
+| `v` | Verify | `verify` |
+| `r` | Restore | `restore` |
+| `u` | Update Tools | `update-tools` |
+| `c` | Edit Config | *(none — edit `config.json` directly, or use the TUI)* |
+
+Besides `status --watch`, no subcommand takes any flags beyond the global `--help`/`--version` — nothing here is configurable from the command line itself:
 
 ```bash
 sudo headless-macs precheck        # Read-only audit — no changes
@@ -63,10 +126,16 @@ sudo headless-macs verify          # Health check
 sudo headless-macs update-tools    # In-place binary upgrades
 sudo headless-macs storage         # External volume setup
 sudo headless-macs restore         # Undo everything
+sudo headless-macs status          # What's running and what it's costing you
+sudo headless-macs status --watch  # Same, refreshing in place (same interval as the TUI Dashboard)
 
 sudo headless-macs --help          # Show all commands and options
 sudo headless-macs --version       # Print version and exit
 ```
+
+Every CLI invocation also prints a one-line `[INFO]` to stderr if this
+box was last configured by a different version of the binary than the one
+currently running — the same nudge the Dashboard shows.
 
 Output uses the same `[SET]`/`[SKIP]`/`[WARN]`/`[PASS]`/`[FAIL]` prefix convention as the v1 shell scripts, teed to `/var/log/mac-llm-setup/`. Exit codes: `0` = success, `1` = failures, `2` = warnings only.
 
@@ -81,6 +150,7 @@ Output uses the same `[SET]`/`[SKIP]`/`[WARN]`/`[PASS]`/`[FAIL]` prefix conventi
 | **mlx-lm** | Custom HuggingFace models not in Rapid-MLX | 8080 | Use when you need a specific HF path. |
 | **Infinity** | Embeddings + reranking for RAG pipelines | 7997 | MPS-accelerated. OpenAI-compatible `/v1/embeddings` and `/v1/rerank`. |
 | **Exo** | Multi-Mac distributed inference | 52415 | Pools unified memory across devices. Requires auto-login. |
+| **macmon** | Hardware telemetry (not inference) | 9090 | CPU/GPU/ANE power, temp, memory over HTTP. `GET /json`, `/metrics` (Prometheus). Disabled by default. |
 
 Enable tools through the **Edit Config** screen (`c` from the menu), or by editing `~/.headless_macs/config.json` directly:
 
@@ -91,14 +161,31 @@ Enable tools through the **Edit Config** screen (`c` from the menu), or by editi
     "rapid_mlx": { "enabled": false },
     "mlx_lm":   { "enabled": false },
     "infinity":  { "enabled": false },
-    "exo":       { "enabled": false }
+    "exo":       { "enabled": false },
+    "macmon":    { "enabled": false }
   }
 }
 ```
 
 See [`docs/tool-comparison.md`](docs/tool-comparison.md) for a full comparison.
 
-> **Network defaults:** Services bind to `localhost` (`127.0.0.1`) by default and the firewall is left enabled. Set `"localhost_only": false` to allow LAN clients. If you run unsigned Python services (Rapid-MLX, mlx-lm, Infinity) and cannot manage per-app firewall rules, also set `"disable_firewall": true` — only do this on an isolated trusted network.
+> **Rapid-MLX memory:** once started, Rapid-MLX holds its full model
+> resident in unified memory for as long as the daemon runs, regardless of
+> request activity (~20–25GB observed with a mid-size model). Running it
+> alongside Ollama means accounting for that footprint when tuning
+> Ollama's `MAX_LOADED_MODELS` — Precheck warns when both are enabled, but
+> does not adjust the tuning for you. See `docs/tool-comparison.md` for
+> details.
+
+> **Network defaults:** Services bind to `localhost` (`127.0.0.1`) by default and the firewall is left enabled. Set `"localhost_only": false` to allow LAN clients. If you run unsigned Python services (Rapid-MLX, mlx-lm, Infinity) and cannot manage per-app firewall rules, also set `"disable_firewall": true` — only do this on an isolated trusted network. None of this adds authentication or TLS to the tools themselves — see the security-scope note above and [`FUTURES.md`](FUTURES.md).
+
+> **macmon binding:** the Homebrew-installed `macmon` build has not
+> consistently shipped a `--host`/`--bind` flag. `headless-macs` detects
+> this automatically — if present, `localhost_only` is honored like every
+> other tool; if not, macmon binds all interfaces regardless of that
+> setting, and both `install-tools` and `verify` print a `[WARN]`
+> explaining why. `brew upgrade macmon` then re-run `install-tools` once a
+> version with `--host` is available.
 
 ---
 
@@ -173,7 +260,7 @@ sudo ./headless-macs    # → v (Verify)
 
 **Verify** checks every installed component and reports pass/warn/fail across system, network, storage, and each enabled serving tool:
 
-![Verify screen showing 29 checks passed on a configured node](images/Screenshot%202.jpg)
+![Verify screen showing 36 checks passed, 4 warnings on a configured node](images/verify.jpg)
 
 See [`docs/ram-sizing.md`](docs/ram-sizing.md) for full model recommendations by hardware tier.
 

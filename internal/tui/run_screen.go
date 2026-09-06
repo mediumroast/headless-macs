@@ -188,16 +188,34 @@ func (m RunScreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// StatusHints is the shell-level status bar's content while this screen
+// is the active content pane.
+func (m RunScreenModel) StatusHints() string {
+	return hint("↑↓/PgUp/PgDn", "scroll") + statusGap() + hint("q", "back to menu")
+}
+
+// View reassembles a full-screen render for tea.Model conformance — not
+// how the shell actually renders this screen (it calls Body()/
+// StatusHints() directly).
 func (m RunScreenModel) View() string {
 	var b strings.Builder
-
 	b.WriteString(styleTitle.Render(fmt.Sprintf(" headless-macs v%s — %s ", Version, m.title)))
 	b.WriteByte('\n')
 	b.WriteString(styleDivider.Render(strings.Repeat("─", max(m.width, 40))))
 	b.WriteByte('\n')
+	b.WriteString(m.Body())
+	b.WriteString(styleStatusBar.Render(m.StatusHints()))
+	return b.String()
+}
+
+// Body renders the scrollable action list, using its own stored
+// width/height (set via the content-pane-sized WindowSizeMsg the shell
+// sends it — see app.go).
+func (m RunScreenModel) Body() string {
+	var b strings.Builder
 
 	if m.state == runStateRunning {
-		b.WriteString("\n  " + m.spinner.View() + "  Running… (requires sudo — changes are being applied)\n")
+		b.WriteString("\n  " + m.spinner.View() + styleFieldValue.Render("  Running… (requires sudo — changes are being applied)") + "\n")
 		return b.String()
 	}
 
@@ -258,14 +276,11 @@ func (m RunScreenModel) View() string {
 		}
 	}
 
-	b.WriteString(styleStatusBar.Render(
-		hint("↑↓/PgUp/PgDn", "scroll") + "  " + hint("q", "back to menu"),
-	))
 	return b.String()
 }
 
 func (m RunScreenModel) visibleRows() int {
-	v := m.height - 9 // title(2) + indicator(1) + summary(3) + log(1) + status(1) + padding(1)
+	v := m.height - 6 // indicator-above(1) + indicator-below(1) + divider(1) + summary(1) + log(1) + padding(1)
 	if v < 1 {
 		v = 1
 	}
@@ -313,6 +328,15 @@ func (m RunScreenModel) renderActions() []string {
 	if actions == nil {
 		return nil
 	}
+	// MaxWidth budgeted for each line's prefix — see the identical
+	// reasoning in precheck_screen.go's renderChecks().
+	maxW := m.width
+	if maxW <= 0 {
+		maxW = 200
+	}
+	msgW := maxW - 9
+	detailW := maxW - 9
+
 	rows := make([]string, 0, len(actions))
 	currentSection := ""
 
@@ -325,26 +349,26 @@ func (m RunScreenModel) renderActions() []string {
 			currentSection = a.Section
 		}
 
-		prefix, render := actionStyle(a.Status)
+		prefix, render := actionStyle(a.Status, msgW)
 		rows = append(rows, styleKeyHint.Render(prefix)+render(a.Message))
 		if a.Detail != "" {
-			rows = append(rows, styleKeyHint.Render("         ")+styleFieldModified.Render(a.Detail))
+			rows = append(rows, styleKeyHint.Render("         ")+styleFieldModified.MaxWidth(detailW).Render(a.Detail))
 		}
 	}
 	return rows
 }
 
-func actionStyle(s ops.ActionStatus) (prefix string, render func(string) string) {
+func actionStyle(s ops.ActionStatus, maxW int) (prefix string, render func(string) string) {
 	switch s {
 	case ops.ActionSet:
-		return "  [SET]  ", func(m string) string { return styleStatusSaved.Render(m) }
+		return "  [SET]  ", func(m string) string { return styleStatusSaved.MaxWidth(maxW).Render(m) }
 	case ops.ActionSkip:
-		return "  [SKIP] ", func(m string) string { return styleKeyHint.Render(m) }
+		return "  [SKIP] ", func(m string) string { return styleKeyHint.MaxWidth(maxW).Render(m) }
 	case ops.ActionWarn:
-		return "  [WARN] ", func(m string) string { return styleFieldModified.Render(m) }
+		return "  [WARN] ", func(m string) string { return styleFieldModified.MaxWidth(maxW).Render(m) }
 	case ops.ActionFail:
-		return "  [FAIL] ", func(m string) string { return styleError.Render(m) }
+		return "  [FAIL] ", func(m string) string { return styleError.MaxWidth(maxW).Render(m) }
 	default:
-		return "         ", func(m string) string { return styleFieldValue.Render(m) }
+		return "         ", func(m string) string { return styleFieldValue.MaxWidth(maxW).Render(m) }
 	}
 }

@@ -90,6 +90,13 @@ Rapid-MLX retains meaningful advantages in serving sophistication over Ollama 0.
 - Model aliases (`rapid-mlx models`) don't cover every HF model — use mlx-lm for those
 - First `serve` downloads the model — API unavailable until download completes
 - Vision/audio require extras: `pip install 'rapid-mlx[vision]'`
+- **Holds its model resident in unified memory for as long as the daemon
+  runs, regardless of request activity** — confirmed ~20–25GB continuously
+  consumed on doppio-1 with qwen3-aftertaste-fused. If you also run Ollama
+  on the same node, account for this footprint when tuning Ollama's
+  `MAX_LOADED_MODELS`, or the node can be overcommitted. `headless-macs`
+  precheck warns when both are enabled together, but does not currently
+  adjust Ollama's tuning for you.
 
 **When to choose Rapid-MLX**
 - Primary use case is a coding agent (Claude Code, Cursor, Aider, Continue)
@@ -160,14 +167,12 @@ Clusters multiple Apple Silicon Macs into a single distributed inference node. P
 
 **Strengths**
 - Run 405B models across 3× Mac Mini M4 64GB (pooling 192GB)
-- Tailscale discovery works across networks (not just LAN)
 - OpenAI-compatible API
 
 **Weaknesses**
 - Runs as LaunchAgent (user-level), not LaunchDaemon — requires auto-login for headless boot
 - Each node must have Exo installed and running
 - Beta — less tested than single-node options
-- Bonjour discovery limited to LAN; Tailscale recommended for production
 
 **When to choose Exo**
 - You have multiple Apple Silicon Macs you want to use as a cluster
@@ -176,5 +181,33 @@ Clusters multiple Apple Silicon Macs into a single distributed inference node. P
 
 **Requirements**
 - Auto-login configured on every node (`sysadminctl -autologin set`)
-- Tailscale installed and running on all nodes (for cross-network discovery)
-- Same Exo version on all nodes
+- Same Exo version on all nodes (`tools.exo.bootstrap_peers` in
+  `config.json` lists other nodes' libp2p addresses to dial on startup for
+  cross-network clustering; same-LAN/same-namespace nodes auto-discover
+  without it — see `--namespace`/`--zenoh-port`/`--discovery-port` in
+  exo's own `--help` for the underlying mechanism)
+
+> **Corrected 2026-09:** earlier versions of this doc described Tailscale-
+> based discovery and a `--discovery-module` flag. Neither exists in
+> current exo — confirmed by reading `exo-explore/exo`'s actual CLI source
+> while fixing `headless-macs`' Exo integration, which had been passing
+> that flag and failing to start as a result. Peer discovery is
+> zenoh/libp2p-based (`--bootstrap-peers`), not a pluggable
+> tailscale-or-otherwise module.
+
+---
+
+## macmon (hardware telemetry — not an inference tool)
+
+Not a serving/inference backend like the five tools above — [`macmon`](https://github.com/vladkens/macmon) is an optional hardware telemetry daemon (`com.llm-server.macmon`) exposing CPU/GPU/ANE power draw, temperature, and memory stats over HTTP (`GET /json`, `GET /metrics` in Prometheus format). It reads this through a private macOS API rather than `powermetrics`, so it needs no root privilege — confirmed to work from a system LaunchDaemon with no console session logged in.
+
+**Why you'd enable it**
+- Confirms an inference node isn't thermal-throttling under sustained load
+- `/metrics` is a ready-made Prometheus scrape target if you're building any observability around this node
+- Zero cost when disabled — `tools.macmon.enabled` defaults to `false`
+
+**Known limitation**
+- The Homebrew-installed `macmon` build has not consistently shipped a `--host`/`--bind` flag on `serve`. `headless-macs` detects this at install time: if the flag is present, `network.localhost_only` is honored exactly like every other tool; if it isn't, macmon binds all interfaces regardless of that setting, and both `install-tools` and `verify` surface a `[WARN]` explaining why. Upgrading macmon (`brew upgrade macmon`) and re-running `install-tools` picks up `--host` support automatically once a version ships it.
+- No authentication or TLS, same as every other tool this project installs — deferred pending broader security work (see `FUTURES.md`).
+
+**Requirements:** none beyond what `install-tools` handles — Homebrew install, `/var/log/macmon/` log directory, and the daemon itself are all automatic once `tools.macmon.enabled` is `true`.

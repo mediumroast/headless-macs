@@ -96,6 +96,7 @@ func RunBaseline(cfg *config.Config, opts BaselineOptions) (*BaselineResult, err
 	r.sectionMaxfiles()
 
 	r.printSummary()
+	WriteVersionMarker()
 	ilog.Info(fmt.Sprintf("Log written to: %s", logPath))
 	return r, nil
 }
@@ -197,9 +198,19 @@ func (r *BaselineResult) disableService(section, domain string, sipEnabled bool)
 }
 
 // installLaunchDaemon writes a plist and bootstraps it if not already present.
+// installLaunchDaemon is idempotent by content comparison, not by
+// existence: an existence-only check ("skip if the plist is already
+// there") can never pick up a content change in a later version of this
+// code — the same class of bug found in installLogRotate() (tools.go,
+// see PHASE_7_PLAN.md history). Comparing generated content against what's
+// on disk means any future change to one of this helper's callers
+// (caffeinate, sysctl-tuning, maxfiles, pmset-heal) reaches an existing
+// box the next time Baseline runs, instead of silently never applying.
 func (r *BaselineResult) installLaunchDaemon(section, plistPath, label, content string) {
-	if _, err := os.Stat(plistPath); err == nil {
-		r.add(section, ActionSkip, fmt.Sprintf("%s already installed", label), "")
+	existing, err := os.ReadFile(plistPath)
+	freshInstall := os.IsNotExist(err)
+	if err == nil && string(existing) == content {
+		r.add(section, ActionSkip, fmt.Sprintf("%s already installed and up to date", label), "")
 		return
 	}
 	if err := os.WriteFile(plistPath, []byte(content), 0o644); err != nil {
@@ -208,11 +219,21 @@ func (r *BaselineResult) installLaunchDaemon(section, plistPath, label, content 
 	}
 	_ = runCmd("chown", "root:wheel", plistPath)
 	_ = runCmd("chmod", "644", plistPath)
+	if !freshInstall {
+		// Reload rather than bootstrap-over-loaded: content changed under an
+		// already-running daemon, so the old instance must be booted out
+		// first or launchd won't pick up the new plist.
+		_ = runCmd("launchctl", "bootout", "system", plistPath)
+	}
 	if err := runCmd("launchctl", "bootstrap", "system", plistPath); err != nil {
 		r.add(section, ActionWarn, fmt.Sprintf("%s written but bootstrap failed: %v", label, err), "")
 		return
 	}
-	r.add(section, ActionSet, fmt.Sprintf("%s installed and started", label), "")
+	if freshInstall {
+		r.add(section, ActionSet, fmt.Sprintf("%s installed and started", label), "")
+	} else {
+		r.add(section, ActionSet, fmt.Sprintf("%s content changed — reloaded", label), "")
+	}
 }
 
 func (r *BaselineResult) defaultsWrite(section string, args ...string) {
@@ -507,6 +528,44 @@ func (r *BaselineResult) sectionServices(cfg *config.Config, sipEnabled bool) {
 		_ = runCmd("tmutil", "addexclusion", "/Library/Ollama")
 		r.add(sec, ActionSet, "Time Machine disabled; /Library/Ollama excluded", "")
 	}
+
+	// Phase 8: suppress five more services with no purpose on a headless
+	// inference node. See phase8Suppressions for the list and rationale —
+	// shared with sectionRestoreServices() and Verify's checkServiceSuppressed
+	// so the suppress/restore lists can never drift apart.
+	for _, svc := range phase8Suppressions {
+		r.disableService(sec, "system/"+svc.Label, sipEnabled)
+		if svc.Plist != "" {
+			_ = runCmd("launchctl", "bootout", "system", svc.Plist)
+		}
+	}
+}
+
+// phase8Suppressions is the single source of truth for the five services
+// Phase 8 suppresses — used here to suppress them, in restore.go to
+// re-enable them, and in verify.go to confirm they're not running. One
+// shared list means the suppress and restore sides can never drift apart
+// across a release, which would otherwise leave a box in a state neither
+// Baseline nor Restore's own Verify checks fully recognize.
+var phase8Suppressions = []struct {
+	Label string // launchd label, without the "system/" domain prefix
+	Plist string // system plist to bootout immediately; "" if not needed
+}{
+	// Content Caching — macOS's LAN proxy for Apple software downloads;
+	// no value on an inference node, unnecessary disk/network I/O.
+	{"com.apple.AssetCache.builtin", "/System/Library/LaunchDaemons/com.apple.AssetCache.builtin.plist"},
+	// mobileassetd — downloads/manages iPhone/iPad firmware assets and
+	// carrier bundles; largest unnecessary process by RSS on doppio-1.
+	{"com.apple.MobileAssetUpdater", "/System/Library/LaunchDaemons/com.apple.MobileAssetUpdater.plist"},
+	// Audio stack — no speakers, microphone, or audio use case headless;
+	// generates periodic CPU wakeups.
+	{"com.apple.audio.coreaudiod", ""},
+	{"com.apple.audiomxd", ""},
+	// Find My beaconing — periodically broadcasts location to Apple's Find
+	// My network; no value on a rack/desk inference node.
+	{"com.apple.findmybeaconingd", "/System/Library/LaunchDaemons/com.apple.findmybeaconingd.plist"},
+	// AirPlay receiver/sender helper — not needed headless.
+	{"com.apple.AirPlayXPCHelper", ""},
 }
 
 // ---------------------------------------------------------------------------

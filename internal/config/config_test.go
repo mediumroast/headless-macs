@@ -28,4 +28,13 @@ func TestLoadTemplate(t *testing.T) {
 	if c.Network.LocalhostOnly {
 		t.Error("expected network.localhost_only = false in template")
 	}
+	if c.Tools.Macmon.Enabled {
+		t.Error("expected macmon.enabled = false in template (opt-in)")
+	}
+	if c.Tools.Macmon.Port != 9090 {
+		t.Errorf("expected macmon.port = 9090, got %d", c.Tools.Macmon.Port)
+	}
+	if c.Tools.Macmon.IntervalMs != 1000 {
+		t.Errorf("expected macmon.interval_ms = 1000, got %d", c.Tools.Macmon.IntervalMs)
+	}
 }

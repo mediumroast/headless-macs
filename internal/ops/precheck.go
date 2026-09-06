@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -95,6 +96,8 @@ func RunPrecheck(cfg *config.Config) (*PrecheckResult, error) {
 	r.checkNetwork(cfg)
 	r.checkStorage(cfg)
 	r.checkPower()
+	r.checkAdvisories(cfg)
+	r.checkConfigKeys()
 	r.finalise()
 
 	if err := r.writeJSON(); err != nil {
@@ -317,6 +320,7 @@ var prereqs = []prereq{
 	{"git", "git", false, "brew install git"},
 	{"Ollama", "ollama", false, "install-tools.sh will install"},
 	{"Rapid-MLX", "rapid-mlx", false, "install-tools.sh will install"},
+	{"macmon", "macmon", false, "install-tools.sh will install"},
 }
 
 func (r *PrecheckResult) checkPrerequisites() {
@@ -379,12 +383,48 @@ type portCheck struct {
 	Port int
 }
 
-var toolPorts = []portCheck{
-	{"Ollama", 11434},
-	{"Rapid-MLX", 8000},
-	{"mlx-lm", 8080},
-	{"Infinity", 7997},
-	{"Exo", 52415},
+// effectiveToolPorts reads each tool's actual configured port from cfg,
+// falling back to that tool's own install-time default only when the
+// config value is unset (0) — matching the fallback logic in tools.go
+// exactly, so a precheck port-availability check on a customized config
+// checks the port that will actually be used, not always the shipped
+// template's value. (Ollama's port is embedded in its Host string rather
+// than a separate field, so it stays a fixed constant here — a narrower,
+// pre-existing gap not addressed by this pass.)
+func effectiveToolPorts(cfg *config.Config) []portCheck {
+	ports := []portCheck{{"Ollama", 11434}}
+	if cfg == nil {
+		return append(ports,
+			portCheck{"Rapid-MLX", 8080}, portCheck{"mlx-lm", 8000},
+			portCheck{"Infinity", 7997}, portCheck{"Exo", 52415}, portCheck{"macmon", 9090})
+	}
+	rapidMLXPort := cfg.Tools.RapidMLX.Port
+	if rapidMLXPort == 0 {
+		rapidMLXPort = 8080
+	}
+	mlxlmPort := cfg.Tools.MLXLM.Port
+	if mlxlmPort == 0 {
+		mlxlmPort = 8000
+	}
+	infinityPort := cfg.Tools.Infinity.Port
+	if infinityPort == 0 {
+		infinityPort = 7997
+	}
+	exoPort := cfg.Tools.Exo.ChatGPTAPIPort
+	if exoPort == 0 {
+		exoPort = 52415
+	}
+	macmonPort := cfg.Tools.Macmon.Port
+	if macmonPort == 0 {
+		macmonPort = 9090
+	}
+	return append(ports,
+		portCheck{"Rapid-MLX", rapidMLXPort},
+		portCheck{"mlx-lm", mlxlmPort},
+		portCheck{"Infinity", infinityPort},
+		portCheck{"Exo", exoPort},
+		portCheck{"macmon", macmonPort},
+	)
 }
 
 func (r *PrecheckResult) checkNetwork(cfg *config.Config) {
@@ -402,7 +442,7 @@ func (r *PrecheckResult) checkNetwork(cfg *config.Config) {
 	}
 
 	// Port availability
-	for _, p := range toolPorts {
+	for _, p := range effectiveToolPorts(cfg) {
 		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p.Port))
 		if err != nil {
 			// Port in use — try to identify the process
@@ -549,6 +589,140 @@ func (r *PrecheckResult) checkPower() {
 				r.info("POWER", fmt.Sprintf("pmset %s=%s (setup.sh will set to %s)", key, val, expected))
 			}
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Section: Advisories (informational — headless-macs shouldn't act on these directly)
+// ---------------------------------------------------------------------------
+
+// checkAdvisories flags two conditions worth an operator's attention that
+// this project should not automate a fix for: third-party software it
+// didn't install (Docker), and a config combination that's valid but has a
+// resource-planning implication (Rapid-MLX's memory footprint).
+func (r *PrecheckResult) checkAdvisories(cfg *config.Config) {
+	// Docker's privileged networking helper — headless-macs did not install
+	// Docker and should not uninstall third-party software; detection only.
+	if _, err := os.Stat("/Library/LaunchDaemons/com.docker.vmnetd.plist"); err == nil {
+		r.warn("ADVISORY", "Docker vmnetd detected — remove Docker if not required on this inference node", "")
+	}
+
+	// Rapid-MLX pins its full model in unified memory for as long as the
+	// daemon runs, regardless of request activity (confirmed ~20-25GB on
+	// doppio-1 with qwen3-aftertaste-fused) — this is fine on its own, but
+	// an operator running it alongside Ollama needs to account for it when
+	// tuning MAX_LOADED_MODELS, or the node can be overcommitted.
+	if cfg != nil && cfg.Tools.RapidMLX.Enabled && cfg.Tools.Ollama.Enabled {
+		r.warn("ADVISORY",
+			"Rapid-MLX and Ollama both enabled — Rapid-MLX holds its model resident in memory continuously",
+			"Account for Rapid-MLX's footprint when tuning Ollama's MAX_LOADED_MODELS")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Section: stale/removed config.json keys
+// ---------------------------------------------------------------------------
+
+// renamedConfigKeys maps a dotted JSON key path that has been removed or
+// renamed to a human explanation, shown instead of the generic
+// "unrecognized key" message when a match is found. Add an entry here
+// whenever a future phase renames or removes a config.json field, so an
+// existing install's stale key gets a specific, actionable message instead
+// of json.Unmarshal silently ignoring it forever.
+var renamedConfigKeys = map[string]string{
+	"tools.exo.discovery_module": "renamed to tools.exo.bootstrap_peers in Phase 7 — the old key mapped to a --discovery-module flag that never existed in exo's CLI. Remove this key; it has no effect.",
+}
+
+// checkConfigKeys flags any key present in the user's config.json that has
+// no corresponding field in the current Config struct. json.Unmarshal
+// silently ignores unknown keys by default, which means a renamed or
+// removed field (see renamedConfigKeys) sits in an operator's config file
+// forever, doing nothing, with no indication anything is wrong.
+func (r *PrecheckResult) checkConfigKeys() {
+	data, err := os.ReadFile(config.UserConfigPath())
+	if err != nil {
+		return // no user config yet — nothing to check
+	}
+	var userTree map[string]interface{}
+	if json.Unmarshal(data, &userTree) != nil {
+		return // malformed JSON is a separate problem, not this check's job
+	}
+
+	known := knownConfigKeyPaths()
+	userPaths := map[string]bool{}
+	collectKeyPaths(userTree, "", userPaths)
+
+	var stale []string
+	for path := range userPaths {
+		if !known[path] {
+			stale = append(stale, path)
+		}
+	}
+	sort.Strings(stale)
+
+	if len(stale) == 0 {
+		r.ok("CONFIG", "No stale or unrecognized keys in config.json")
+	}
+	for _, path := range stale {
+		if reason, ok := renamedConfigKeys[path]; ok {
+			r.warn("CONFIG", "config.json has a stale key: "+path, reason)
+		} else {
+			r.warn("CONFIG", "config.json has an unrecognized key: "+path,
+				"Not used by this version — may be a typo or left over from an older release")
+		}
+	}
+
+	// Discoverability nudge for opt-in features an existing config predates
+	// entirely (Phase 9G) — reuses userPaths above rather than a second
+	// parse. Only fires when the whole section is missing, not when it's
+	// present with enabled: false — the latter means the operator already
+	// saw and considered it.
+	for path, msg := range newOptInFeatures {
+		if !userPaths[path] {
+			r.info("CONFIG", msg)
+		}
+	}
+}
+
+// newOptInFeatures maps a config.json section path to a one-time discovery
+// message, shown when that section is entirely absent from an existing
+// install's config (not just disabled) — so an operator upgrading the
+// binary learns a new opt-in capability exists instead of never finding
+// out short of reading CHANGELOG.md. Add an entry here whenever a future
+// phase adds a new optional tools.* section.
+var newOptInFeatures = map[string]string{
+	"tools.macmon": "macmon hardware telemetry available (Phase 9) — not configured; see docs/tool-comparison.md",
+}
+
+// knownConfigKeyPaths returns every dotted JSON key path the current
+// Config struct defines, derived from its zero-value JSON representation
+// rather than a hand-maintained list — this stays in sync with
+// internal/config/config.go automatically as fields are added or removed.
+func knownConfigKeyPaths() map[string]bool {
+	data, _ := json.Marshal(&config.Config{})
+	var tree map[string]interface{}
+	_ = json.Unmarshal(data, &tree)
+	paths := map[string]bool{}
+	collectKeyPaths(tree, "", paths)
+	return paths
+}
+
+// collectKeyPaths walks a decoded JSON object tree, recording every
+// object-valued key's dotted path into out. Arrays and scalar leaves are
+// not descended into — a key path's presence is all that's checked here,
+// not its value's shape.
+func collectKeyPaths(node interface{}, prefix string, out map[string]bool) {
+	m, ok := node.(map[string]interface{})
+	if !ok {
+		return
+	}
+	for k, v := range m {
+		path := k
+		if prefix != "" {
+			path = prefix + "." + k
+		}
+		out[path] = true
+		collectKeyPaths(v, path, out)
 	}
 }
 

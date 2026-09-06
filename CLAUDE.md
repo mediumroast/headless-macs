@@ -407,3 +407,6 @@ gh release list
 | v1.1.0 | 2026-06-10 | Phase 4: Modelfile system, KV cache model, Zoo Code (PR #2) |
 | v1.2.0 | 2026-06-11 | Phase 5: Security hardening, operational improvements, Ollama lifecycle (PR #3) |
 | v2.0.0 | 2026-08-15 | Phase 6: Go rewrite — TUI binary replaces shell pipeline (PR #4) |
+| v2.1.0 | 2026-08-15 | Post-launch fixes and CLI headless support found on doppio-1 (PR #4) |
+| v2.1.1 | 2026-08-15 | Fix: TUI version string and `.gitignore` pattern (PR #5) |
+| v2.2.0 | 2026-09-06 | Phases 7–10: log management, service suppression, macmon, TUI/CLI restructure (PR #6) |

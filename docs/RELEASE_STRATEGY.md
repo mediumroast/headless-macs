@@ -107,10 +107,10 @@ Every release gets an annotated tag on `main`, named exactly after the
 
 ```bash
 git checkout main && git pull
-git tag -a v2.2.0 -m "Phase 7: Serving-tool log management"
+git tag -a v2.2.0 -m "Phases 7-10: log management, service suppression, macmon, TUI/CLI restructure"
 git push origin v2.2.0
 gh release create v2.2.0 \
-  --title "v2.2.0 — Phase 7: Serving-tool log management" \
+  --title "v2.2.0 — Phases 7-10: log management, service suppression, macmon, TUI/CLI restructure" \
   --notes-file <(sed -n '/## \[2\.2\.0\]/,/## \[2\.1\.1\]/p' CHANGELOG.md | head -n -1)
 ```
 
@@ -151,10 +151,21 @@ near-term roadmap:
   `PHASE_10_PLAN.md`): none of these break `config.json` compatibility or
   change the CLI's interface shape in a way that breaks existing scripts —
   they add new optional config keys (`tools.macmon`, `tools.ollama.log_level`),
-  new daemons, and a new `status` subcommand. Each is a **minor** release
-  on `main` directly, via its own short-lived branch and PR, in sequence:
-  `v2.2.0` (Phase 7), `v2.3.0` (Phase 8), `v2.4.0` (Phase 9), `v2.5.0`
-  (Phase 10). No `V3` branch needed for any of them.
+  new daemons, and a new `status` subcommand. Each is individually
+  **minor**-release-sized work, and the original version of this section
+  planned them as four separate `main` releases in sequence — `v2.2.0`
+  (Phase 7), `v2.3.0` (Phase 8), `v2.4.0` (Phase 9), `v2.5.0` (Phase 10).
+  **That's not what happened in practice:** all four landed together on
+  one long-lived branch and were never individually merged to `main`
+  along the way. Since none of them shipped before the others, they
+  became a single combined minor release, `v2.2.0`, covering all four
+  phases at once — still correctly a **minor** bump (nothing about
+  bundling them changes whether the change is breaking), just one
+  release instead of four. No `V3` branch was needed for any of them.
+  The lesson for next time: if a phase is going to sit unmerged for a
+  while, tagging it as its own minor release before starting the next
+  phase keeps this worked example's original (better) pattern true —
+  bundling like this works, but it's the fallback, not the goal.
 - **A hypothetical future breaking change** — e.g., Item 12's deferred
   TLS/auth work, if it ends up requiring `install-tools.sh`'s /
   `install-tools`'s `localhost_only` semantics to change incompatibly (forcing

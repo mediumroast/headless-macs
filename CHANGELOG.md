@@ -9,11 +9,18 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-_Changes on the current branch not yet merged to main._
+_No changes yet._
 
-Phase 7: serving-tool log management. Phase 8: unnecessary service
-suppression. Phase 9: macmon hardware telemetry daemon. Phase 10: TUI
-structure redesign (sidebar + Dashboard) and version-injection fix.
+---
+
+## [2.2.0] — 2026-09-06
+
+Phases 7–10, shipped together on one branch rather than as four separate
+minor releases: Phase 7 (serving-tool log management), Phase 8
+(unnecessary service suppression), Phase 9 (macmon hardware telemetry
+daemon), Phase 10 (TUI structure redesign — sidebar + Dashboard — and the
+version-injection fix). See `docs/RELEASE_STRATEGY.md`'s worked example
+for why this is one release instead of `v2.2.0`–`v2.5.0`.
 
 ### Fixed
 
@@ -197,6 +204,10 @@ respective command runs — there is no separate migration step:
 
 Run `sudo headless-macs verify` afterward to confirm — its `[WARN]`/`[FAIL]`
 messages name the exact command to fix whatever they flag.
+
+### PR
+
+_#6 Phases 7–10: log management, service suppression, macmon, TUI/CLI restructure (link after merge)_
 
 ---
 
@@ -403,7 +414,8 @@ Initial release: single-script pmset + Ollama LaunchDaemon setup.
 
 ---
 
-[Unreleased]: https://github.com/miha42-github/headless-macs/compare/v2.1.1...HEAD
+[Unreleased]: https://github.com/miha42-github/headless-macs/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/miha42-github/headless-macs/compare/v2.1.1...v2.2.0
 [2.1.1]: https://github.com/miha42-github/headless-macs/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/miha42-github/headless-macs/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/miha42-github/headless-macs/compare/v1.2.0...v2.0.0

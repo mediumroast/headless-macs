@@ -8,9 +8,10 @@ When an item is picked up, move it into a `PHASE_N_PLAN.md` and delete it here.
 ## Security — Unauthenticated, Unencrypted Serving Endpoints
 
 **Deferred.** This item is intentionally not yet scheduled into a
-`PHASE_N_PLAN.md` — Phases 7–10 (Ollama/serving-tool log management,
-service suppression, macmon telemetry, and the related TUI/CLI work) are
-being implemented first. Revisit this once that work lands.
+`PHASE_N_PLAN.md`. Phases 7–10 (Ollama/serving-tool log management,
+service suppression, macmon telemetry, and the related TUI/CLI work,
+released together as v2.2.0) have now landed — this is the next
+candidate for a `PHASE_N_PLAN.md` once picked up.
 
 ### 1. No TLS or authentication in front of any serving-tool daemon
 

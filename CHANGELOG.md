@@ -9,6 +9,16 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+_No changes yet._
+
+---
+
+## [2.2.1] — 2026-09-07
+
+Docs-only bugfix release: corrects factually wrong hardware/model claims
+and stale command references introduced or left over from Phases 7–10 and
+earlier.
+
 ### Fixed
 
 - **`docs/ram-sizing.md` and `README.md`'s Hardware RAM Reference cited
@@ -37,6 +47,10 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Tailscale-based discovery**, contradicted by `docs/tool-comparison.md`'s
   own prior correction (Phase 7) — neither Tailscale discovery nor a
   `--discovery-module` flag exist in current exo. Brought into sync
+
+### PR
+
+[#10 Docs: fix nonexistent Mac hardware claims and deprecated script refs](https://github.com/mediumroast/headless-macs/pull/10)
 
 ---
 
@@ -234,7 +248,7 @@ messages name the exact command to fix whatever they flag.
 
 ### PR
 
-_#6 Phases 7–10: log management, service suppression, macmon, TUI/CLI restructure (link after merge)_
+[#8 Phase 10 (v2.2.0): serving-tool log management, service suppression, macmon, TUI/CLI restructure](https://github.com/mediumroast/headless-macs/pull/8)
 
 ---
 
@@ -441,7 +455,8 @@ Initial release: single-script pmset + Ollama LaunchDaemon setup.
 
 ---
 
-[Unreleased]: https://github.com/miha42-github/headless-macs/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/miha42-github/headless-macs/compare/v2.2.1...HEAD
+[2.2.1]: https://github.com/miha42-github/headless-macs/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/miha42-github/headless-macs/compare/v2.1.1...v2.2.0
 [2.1.1]: https://github.com/miha42-github/headless-macs/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/miha42-github/headless-macs/compare/v2.0.0...v2.1.0

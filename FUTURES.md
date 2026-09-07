@@ -62,3 +62,48 @@ becomes the only listener on a non-loopback interface). This would need:
 **Scope:** Not yet sized — this is flagged for design, not implementation.
 Per the Planning convention, this needs a `PHASE_N_PLAN.md` with its own
 scope decision table before any code is written.
+
+---
+
+## FileVault — Remote-Disable Automation
+
+### 1. `fdesetup disable` is scriptable over SSH; Precheck only points at the GUI
+
+**Problem:** Precheck (`internal/ops/precheck.go:271-282`) detects
+FileVault via `fdesetup status` and blocks with a `[BLOCKER]` pointing at
+System Settings → Privacy & Security → FileVault → Turn Off — also the
+only fix `docs/known-issues.md` documents. That's a GUI-only instruction,
+which is awkward for a genuinely headless box managed over SSH with no
+monitor attached.
+
+**What's missing (confirmed via testing/docs review, not assumed):**
+`sudo fdesetup disable` is fully scriptable and works over a normal SSH
+session — no physical access needed — as long as it's run *before* the
+box has already rebooted headless with FileVault on. `sudo fdesetup
+authrestart -delayminutes 0` additionally allows one subsequent restart
+without landing at the pre-boot EFI password prompt at all.
+
+**The one thing automation genuinely can't fix:** once a box has already
+rebooted headless with FileVault on, it's stuck at the pre-boot EFI
+password prompt — no `sshd`, no macOS, nothing reachable over the network.
+Recovering from that state needs physical presence (keyboard + display, or
+a remote-KVM/IPMI-equivalent). Any automation here is about preventing
+that state, not escaping it after the fact.
+
+**Direction (not sized yet):**
+- Baseline could offer to run `sudo fdesetup disable` directly — with an
+  explicit confirmation prompt, since this is a real security-posture
+  change on the machine (full-disk encryption off), not a config-file
+  toggle — instead of just blocking and pointing at the GUI.
+- Needs to account for the "user who enabled FileVault" requirement:
+  `fdesetup disable` authenticates against the account that turned
+  FileVault on, so a plain `sudo` from a different admin account may not
+  be sufficient depending on how it was originally enabled — needs
+  verification before relying on it in an automated flow.
+- Independent of whether Baseline ever automates the disable itself,
+  Precheck's `[BLOCKER]` message and `docs/known-issues.md`'s FileVault
+  row should at minimum mention the CLI path (`sudo fdesetup disable`) as
+  a same-SSH-session alternative to the GUI.
+
+**Scope:** Not sized. Touches `internal/ops/precheck.go` (blocker
+message), `internal/ops/baseline.go` (if automated), `docs/known-issues.md`.

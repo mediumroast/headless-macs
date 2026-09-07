@@ -107,3 +107,61 @@ that state, not escaping it after the fact.
 
 **Scope:** Not sized. Touches `internal/ops/precheck.go` (blocker
 message), `internal/ops/baseline.go` (if automated), `docs/known-issues.md`.
+
+---
+
+## Physical Bootstrap — Clear Onboarding for SIP and RDMA (Recovery Mode)
+
+Both of these genuinely require Recovery Mode — booting with the power
+button held, before macOS or `sshd` exists — so no amount of `headless-macs`
+automation removes the physical-access step itself. **The exploration here
+is about usability**: giving a new operator one clear, correctly-ordered
+set of instructions to get through Recovery Mode once, rather than
+discovering each requirement one blocker at a time. Not yet scoped into a
+`PHASE_N_PLAN.md` — flagging the insight, not committing to a design.
+
+### 1. SIP disable — already documented, worth revisiting for prominence
+
+`docs/known-issues.md` already has a full "Entering Recovery Mode" walkthrough
+for `csrutil disable`, and `internal/ops/precheck.go`'s `[BLOCKER]` message
+points at it. What's unexplored: whether that's actually the first thing a
+new operator sees, or something they only find after already hitting the
+blocker mid-setup. Worth considering whether Precheck's very first run (or
+a dedicated onboarding doc) should front-load "you'll need Recovery Mode
+once, for this" before an operator gets partway through and back-tracks.
+
+### 2. RDMA enable for Exo clusters — net-new, currently undocumented
+
+**What it is:** macOS 26.2+ Tahoe added `rdma_ctl`, giving Thunderbolt 5
+Macs (M4 Pro Mac Mini, M4 Max Mac Studio/MacBook Pro, M3 Ultra Mac Studio)
+RDMA between directly-cabled machines — Exo can use this to cut inter-node
+latency from ~300µs to ~3–9µs for tensor-parallel inference. Confirmed via
+exo's own docs and independent benchmarking (Jeff Geerling), not assumed.
+
+**Requirements, all physical or manual:**
+- Recovery Mode on **each** node: `rdma_ctl enable`, then restart — same
+  physical-access step as SIP, just a different command.
+- A direct Thunderbolt 5 cable between every pair of clustered machines
+  (this doesn't route through a switch — it's point-to-point). On Mac
+  Studio, avoid the TB5 port next to the Ethernet port.
+- Every node must run the **exact same macOS version**, including beta
+  build numbers if applicable — mismatched versions can fail to discover
+  each other over RDMA.
+- Building from exo's source, a helper script
+  (`tmp/set_rdma_network_config.sh`) disables Thunderbolt Bridge and sets
+  DHCP on the RDMA-facing ports; unclear yet whether the Homebrew/pip
+  install path needs the equivalent done manually.
+
+**It's optional, not required:** Exo clusters over plain TCP/LAN (including
+Wi-Fi) with zero RDMA setup — this is purely a latency optimization for
+operators who want it, not a functional prerequisite. `headless-macs`'
+Exo support today assumes the no-RDMA path; nothing currently detects
+RDMA capability, prompts for it, or documents the setup.
+
+**Scope:** Not sized. If this gets prioritized: Precheck could detect
+Thunderbolt 5 hardware and macOS 26.2+ and surface RDMA as an available
+option (not a requirement); `docs/tool-comparison.md`'s Exo section and
+`docs/known-issues.md` would need a new subsection; unclear whether
+`internal/ops/tools.go`'s Exo install path needs any changes at all, since
+this is a macOS/exo-level concern once cabled and enabled, not something
+`headless-macs` configures directly today.

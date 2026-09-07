@@ -9,7 +9,34 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-_No changes yet._
+### Fixed
+
+- **`docs/ram-sizing.md` and `README.md`'s Hardware RAM Reference cited
+  hardware that doesn't exist** — "Mac Mini M4 Max" (Mac Mini has never
+  shipped with an M4 Max chip; it tops out at M4 Pro) and "Mac Studio M4
+  Ultra" (there is no M4 Ultra — M4 Max lacks the UltraFusion connector
+  Ultra chips require, so Apple's 2025 Studio refresh paired M4 Max with
+  the previous-gen M3 Ultra instead). Corrected against real
+  `headless-macs precheck` output and current Apple/Ollama library data;
+  added footnotes explaining both errors and a note on how volatile
+  Apple's Ultra-tier RAM configs have been through 2026. Also fixed:
+  `gemma4:27b` → the real tag `gemma4:26b`, and the Ollama auto-tune
+  table's `MAX_CONTEXT` for ≥65GB (said `65,536`; the code leaves it
+  unset/native)
+- **`docs/known-issues.md` and `docs/storage-guide.md` instructed readers
+  to run deprecated v1 shell scripts** (`setup.sh`, `install-tools.sh`,
+  `storage-volume.sh`, `update-tools.sh`) instead of the current
+  `headless-macs` subcommands — every fix cell in both documents predated
+  the Phase 6 Go rewrite and was never updated. Every instruction
+  cross-checked against the actual Go implementation before rewriting
+  (not just renamed) — one fix (`update-tools`) doesn't support the
+  scripts' old per-tool argument, it updates all enabled tools; ownership
+  corrected from `root:wheel` to the real `_llmserver:_llmserver`
+  convention
+- **`docs/known-issues.md`'s Exo troubleshooting row still described
+  Tailscale-based discovery**, contradicted by `docs/tool-comparison.md`'s
+  own prior correction (Phase 7) — neither Tailscale discovery nor a
+  `--discovery-module` flag exist in current exo. Brought into sync
 
 ---
 

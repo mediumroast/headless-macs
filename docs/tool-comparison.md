@@ -151,7 +151,7 @@ Production-grade embedding and reranking server. Uses MPS (Metal Performance Sha
 
 **Weaknesses**
 - Embedding-only — not a generation server
-- Requires `--device mps` flag (set in plist — handled automatically by `install-tools.sh`)
+- Requires `--device mps` flag (set in plist — handled automatically by `headless-macs install-tools`)
 - Without `--device mps`, falls back to CPU at ~10× lower throughput
 
 **When to choose Infinity**

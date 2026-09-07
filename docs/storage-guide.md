@@ -18,9 +18,9 @@ A 70B Q4 model is ~40 GB. A modest library — one large generation model, one c
 
 | Requirement | Why |
 |---|---|
-| **APFS or HFS+ Journaled** | ExFAT/FAT32/NTFS lack Unix permissions — `root:wheel` ownership of model dirs won't work |
+| **APFS or HFS+ Journaled** | ExFAT/FAT32/NTFS lack Unix permissions — `_llmserver:_llmserver` ownership of model dirs won't work |
 | **Auto-mount at boot** | LaunchDaemons start before Finder; without fstab, model dirs don't exist at first boot |
-| **`disksleep 0`** | `setup.sh` handles this — without it, drives spin down mid-inference |
+| **`disksleep 0`** | `headless-macs baseline` handles this — without it, drives spin down mid-inference |
 | **Spotlight excluded** | Without exclusion, `mds` indexes every `.gguf` and `.safetensors` — killing I/O during inference |
 | **Volume label without spaces** | `fstab` and symlink paths break with spaces — use `LLMStorage` not `LLM Storage` |
 
@@ -52,19 +52,19 @@ diskutil eraseDisk APFS LLMStorage /dev/diskN
 }
 ```
 
-### 3. Run storage-volume.sh
+### 3. Run Storage Setup
 
 ```bash
-sudo ./storage-volume.sh
+sudo headless-macs storage
 ```
 
-This handles everything: directory layout, Spotlight exclusion, symlinks, and fstab.
+This handles everything: directory layout, Spotlight exclusion, symlinks, and fstab. (`t` from the TUI sidebar runs the same thing.)
 
 ---
 
 ## Directory Layout on the Volume
 
-`storage-volume.sh` creates this structure:
+`headless-macs storage` creates this structure:
 
 ```
 /Volumes/LLMStorage/
@@ -81,7 +81,7 @@ This handles everything: directory layout, Spotlight exclusion, symlinks, and fs
 
 ## Symlink Strategy
 
-When `symlink_internal_paths: true` (the default), `storage-volume.sh` creates symlinks from the canonical `/Library` paths to the volume. This means `install-tools.sh` always writes plists pointing to `/Library/Ollama/models` — unchanged regardless of whether storage is internal or external.
+When `symlink_internal_paths: true` (the default), `headless-macs storage` creates symlinks from the canonical `/Library` paths to the volume. This means `headless-macs install-tools` always writes plists pointing to `/Library/Ollama/models` — unchanged regardless of whether storage is internal or external.
 
 ```
 /Library/Ollama/models   →  /Volumes/LLMStorage/models/ollama
@@ -90,7 +90,7 @@ When `symlink_internal_paths: true` (the default), `storage-volume.sh` creates s
 /Library/Infinity         →  /Volumes/LLMStorage/models/infinity
 ```
 
-If the internal directory already has models when you run `storage-volume.sh`, they are migrated to the volume automatically before the symlink is created.
+If the internal directory already has models when you run `headless-macs storage`, they are migrated to the volume automatically before the symlink is created.
 
 ---
 
@@ -98,7 +98,7 @@ If the internal directory already has models when you run `storage-volume.sh`, t
 
 LaunchDaemons start during early boot, before Finder has a chance to mount external volumes. Without an fstab entry, the Ollama daemon would fail on first start after a reboot because `/Volumes/LLMStorage/models/ollama` doesn't exist yet.
 
-`storage-volume.sh` adds this entry automatically:
+`headless-macs storage` adds this entry automatically:
 
 ```
 UUID=<volume-uuid> /Volumes/LLMStorage apfs rw,auto,nobrowse 0 0
@@ -135,13 +135,13 @@ ls /Volumes/LLMStorage/models/ollama
 
 Use APFS unless you have a specific reason for HFS+. It's the macOS default since 2017 and handles large files better.
 
-**Do not use ExFAT, FAT32, or NTFS** — these lack Unix permissions and will cause silent failures when `root:wheel` ownership is applied to model directories.
+**Do not use ExFAT, FAT32, or NTFS** — these lack Unix permissions and will cause silent failures when `_llmserver:_llmserver` ownership is applied to model directories.
 
 ---
 
 ## Migrating Existing Models
 
-If Ollama already has models on the internal drive when you enable external storage, `storage-volume.sh` migrates them automatically:
+If Ollama already has models on the internal drive when you enable external storage, `headless-macs storage` migrates them automatically:
 
 ```
 [MIGRATE] Moving existing Ollama models from /Library/Ollama/models → /Volumes/LLMStorage/models/ollama

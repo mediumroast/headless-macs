@@ -196,10 +196,17 @@ See [`docs/tool-comparison.md`](docs/tool-comparison.md) for a full comparison.
 | MacBook Air M3/M4 | 16 GB | `qwen3:8b` (5 GB) · 1 model at a time |
 | MacBook Air M3 / Mac Mini M4 | 24 GB | `qwen3:14b` or `qwen3-coder:30b` (19 GB MoE) |
 | MacBook Pro M4 / Mac Mini M4 Pro | 32 GB | `qwen3:32b` (20 GB) or `deepseek-r1:32b` · 2 models |
-| Mac Mini M4 Max / Mac Studio M4 Max | 64 GB | `llama3.3:70b` Q4 (43 GB) or `deepseek-r1:70b` · 3 models |
-| Mac Mini / Studio M4 Max (Mac16,9) | 128 GB | `llama3.3:70b` Q8 (86 GB) or `qwen3.5:122b` Q4 (81 GB) |
-| Mac Studio M4 Ultra | 192 GB | `qwen3:235b` Q4 (142 GB) · multiple large models simultaneously |
-| Mac Pro M2 Ultra | 192 GB | Same as Studio M4 Ultra |
+| MacBook Pro M4 Max / Mac Studio M4 Max | 64 GB | `llama3.3:70b` Q4 (43 GB) or `deepseek-r1:70b` · 3 models |
+| Mac Studio M4 Max (Mac16,9) | 128 GB | `llama3.3:70b` Q8 (86 GB) or `qwen3.5:122b` Q4 (81 GB) |
+| Mac Studio M3 Ultra | up to 256 GB | `qwen3:235b` Q4 (142 GB) · multiple large models simultaneously |
+| Mac Pro M2 Ultra | 192 GB | 70B Q8 + 70B Q4 simultaneously, or a single ~230B-class Q4 model |
+
+There is no Mac Mini with an M4 Max chip, and no "M4 Ultra" — Apple's Ultra
+chips need a Max chip with the UltraFusion connector, which M4 Max lacks;
+the current Ultra-tier Mac Studio chip is M3 Ultra. See
+[`docs/ram-sizing.md`](docs/ram-sizing.md)'s footnotes for the full
+explanation and a note on how volatile Apple's Ultra-tier RAM configs have
+been through 2026.
 
 Install Tools automatically tunes Ollama's `MAX_LOADED_MODELS`, `NUM_PARALLEL`, and `MAX_CONTEXT` based on detected RAM. See [`docs/ram-sizing.md`](docs/ram-sizing.md).
 

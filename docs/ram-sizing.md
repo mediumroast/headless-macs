@@ -1,8 +1,10 @@
 # RAM Sizing — Model Selection Reference
 
-## Auto-Tune Tiers (used by install-tools.sh)
+## Auto-Tune Tiers (used by Install Tools)
 
-`install-tools.sh` automatically sets Ollama's environment variables based on detected RAM:
+`headless-macs install-tools` (`ollamaAutoTune()` in
+`internal/ops/tools.go`) automatically sets Ollama's environment variables
+based on detected RAM:
 
 | RAM | MAX_LOADED_MODELS | NUM_PARALLEL | MAX_CONTEXT |
 |---|---|---|---|
@@ -10,7 +12,7 @@
 | 17–24 GB | 2 | 2 | 16,384 |
 | 25–32 GB | 2 | 3 | 32,768 |
 | 33–64 GB | 3 | 4 | 32,768 |
-| ≥ 65 GB | 4 | 8 | 65,536 |
+| ≥ 65 GB | 4 | 8 | native (no override) |
 
 Override any value in `config.json` under `tools.ollama`.
 
@@ -23,10 +25,27 @@ Override any value in `config.json` under `tools.ollama`.
 | MacBook Air M3/M4 | 16 GB | 8B Q4 (qwen3:8b); 1 model at a time |
 | MacBook Air M3 / Mac Mini M4 | 24 GB | 14B Q4 (qwen3:14b) or 30B MoE Q4 (qwen3-coder:30b) |
 | MacBook Pro M4 / Mac Mini M4 Pro | 32 GB | 32B Q4 (qwen3:32b, deepseek-r1:32b); 2 models |
-| Mac Mini M4 Max / Mac Studio M4 Max | 64 GB | 70B Q4 (llama3.3:70b, deepseek-r1:70b); 32B Q8 alongside |
-| Mac Mini / Studio M4 Max (Mac16,9) | 128 GB | 70B Q8 or 122B Q4 (qwen3.5:122b); 70B Q4 + 32B Q8 pair; ~22–25 tok/s on 70B |
-| Mac Studio M4 Ultra | 192 GB | 235B Q4 (qwen3:235b, 142 GB); multiple 70B models simultaneously |
-| Mac Pro M2 Ultra | 192 GB | Same as Studio Ultra |
+| MacBook Pro M4 Max / Mac Studio M4 Max | 64 GB | 70B Q4 (llama3.3:70b, deepseek-r1:70b); 32B Q8 alongside |
+| MacBook Pro M4 Max / Mac Studio M4 Max (Mac16,9¹) | 128 GB | 70B Q8 or 122B Q4 (qwen3.5:122b); 70B Q4 + 32B Q8 pair; ~22–25 tok/s on 70B |
+| Mac Studio M3 Ultra² | up to 256 GB | 235B Q4 (qwen3:235b, 142 GB); multiple 70B models simultaneously |
+| Mac Pro M2 Ultra | 192 GB | 70B Q8 + 70B Q4 simultaneously, or a single ~230B-class Q4 model |
+
+¹ `Mac16,9` is Apple's model identifier for the **Mac Studio** with M4 Max —
+confirmed against real `headless-macs precheck` output on doppio-2 (2026-09).
+There is no Mac Mini configuration with an M4 Max chip; Mac Mini tops out
+at M4 Pro (`Mac16,11`), max 64 GB.
+
+² There is no M4 Ultra — the M4 Max chip lacks the UltraFusion connector
+Ultra chips require, so Apple's 2025 Mac Studio refresh paired M4 Max with
+the *previous*-generation M3 Ultra instead. **Apple's Ultra-tier RAM ceiling
+has been volatile through 2026**: M3 Ultra launched (March 2025) at up to
+512 GB, dropped to a 256 GB ceiling (March 2026), then to 96 GB-only (June
+2026) amid supply constraints. Apple announced M5 Max/M5 Ultra in August
+2026, shipping September 22, 2026, restoring higher ceilings (a 512 GB
+configuration follows in October 2026). Check
+[apple.com/mac-studio](https://www.apple.com/mac-studio/) for current
+configurations before buying — do not treat this table as a purchasing
+reference.
 
 ---
 
@@ -48,7 +67,7 @@ Override any value in `config.json` under `tools.ollama`.
 
 ¹ MoE models have large total parameter counts but small active parameter counts per token. Memory for weights is determined by total parameters; compute is determined by active parameters. `qwen3-coder:30b` and `qwen3:235b` are both MoE.
 
-**Rule of thumb:** leave ~4 GB for macOS overhead and budget for KV cache (see below). On a 64 GB machine, your usable model budget is well under 60 GB at large context windows.
+**Rule of thumb:** leave ~8 GB for macOS overhead (see the Effective Memory Budget table below) and budget for KV cache. On a 64 GB machine, your usable model budget is well under 60 GB at large context windows.
 
 ---
 
@@ -88,7 +107,7 @@ ollama pull qwen3-coder:30b            # 19 GB — 256K context; best local codi
 ollama pull deepseek-r1:14b            # 9.0 GB — best mid-range reasoning
 
 # Vision (text + image)
-ollama pull gemma4:27b                 # 17 GB — vision, tool use, and thinking mode
+ollama pull gemma4:26b                 # 18 GB — MoE (26B total, ~4B active); vision, tool use, thinking mode
 
 # Embeddings
 ollama pull mxbai-embed-large          # 670 MB — matches OpenAI ada-002 quality
@@ -111,7 +130,7 @@ ollama pull deepseek-r1:32b            # 20 GB — best local reasoning at this 
 ollama pull mxbai-embed-large          # 670 MB
 ```
 
-### 64 GB (e.g. Mac Mini M4 Max / Mac Studio M4 Max)
+### 64 GB (e.g. MacBook Pro M4 Max / Mac Studio M4 Max)
 
 ```bash
 # General chat
@@ -131,7 +150,7 @@ ollama pull deepseek-r1:70b            # 43 GB — best local reasoning model av
 ollama pull bge-m3                     # 570 MB — multilingual, 8K context
 ```
 
-### 128 GB (e.g. Mac Mini M4 Max, Mac Studio M4 Max — Mac16,9)
+### 128 GB (e.g. MacBook Pro M4 Max, Mac Studio M4 Max — Mac16,9)
 
 Run 70B-class models at Q8 (near-lossless). This is the sweet spot for this tier — Q8/70B
 outperforms Q3/235B on most benchmarks. `qwen3:235b` (142 GB at Q4) does **not** fit here.
@@ -156,7 +175,7 @@ ollama pull deepseek-r1:70b            # ~86 GB at Q8 — best reasoning on a si
 ollama pull bge-m3                     # 570 MB
 ```
 
-### 192 GB (e.g. Mac Studio M4 Ultra)
+### ~192–256 GB (e.g. Mac Pro M2 Ultra, Mac Studio M3 Ultra)
 
 ```bash
 # General chat — flagship local model
@@ -229,8 +248,8 @@ But a single 256K context request causes the primary model to be evicted.
 | Mac | RAM | OS | Primary model | KV headroom | Notes |
 |---|---|---|---|---|---|
 | Mac Mini M4 | 64 GB | 8 GB | 32B Q6_K (~26 GB) | ~30 GB | 128K context comfortable; 256K tight |
-| Mac Mini / Studio M4 Max (Mac16,9) | 128 GB | 8 GB | 70B Q8 (~77 GB) | ~43 GB | 256K context comfortable; 32B alongside at Q4 |
-| Mac Studio M4 Ultra | 192 GB | 8 GB | 80B MoE Q8_0 (~85 GB) | ~99 GB | Multiple large models; full 256K on all |
+| Mac Studio M4 Max (Mac16,9) | 128 GB | 8 GB | 70B Q8 (~77 GB) | ~43 GB | 256K context comfortable; 32B alongside at Q4 |
+| Mac Studio M3 Ultra (256 GB config) | 256 GB | 8 GB | 80B MoE Q8_0 (~85 GB) | ~163 GB | Multiple large models; full 256K on all |
 
 ---
 

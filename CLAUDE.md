@@ -409,4 +409,5 @@ gh release list
 | v2.0.0 | 2026-08-15 | Phase 6: Go rewrite — TUI binary replaces shell pipeline (PR #4) |
 | v2.1.0 | 2026-08-15 | Post-launch fixes and CLI headless support found on doppio-1 (PR #4) |
 | v2.1.1 | 2026-08-15 | Fix: TUI version string and `.gitignore` pattern (PR #5) |
-| v2.2.0 | 2026-09-06 | Phases 7–10: log management, service suppression, macmon, TUI/CLI restructure (PR #6) |
+| v2.2.0 | 2026-09-06 | Phases 7–10: log management, service suppression, macmon, TUI/CLI restructure (PR #8) |
+| v2.2.1 | 2026-09-07 | Fix: nonexistent Mac hardware claims and deprecated script refs in docs (PR #10) |

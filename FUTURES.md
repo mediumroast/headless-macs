@@ -165,3 +165,83 @@ option (not a requirement); `docs/tool-comparison.md`'s Exo section and
 `internal/ops/tools.go`'s Exo install path needs any changes at all, since
 this is a macOS/exo-level concern once cabled and enabled, not something
 `headless-macs` configures directly today.
+
+---
+
+## Community Config/Performance Snapshot — Real Numbers Instead of Estimates
+
+**The problem this solves:** `docs/ram-sizing.md`'s hardware capability and
+KV-cache tables are estimates and vendor-quoted figures, not real observed
+numbers from actual running nodes — and the Mac hardware/model-naming
+mistakes already fixed in this doc (see `CHANGELOG.md`'s `2.2.1` entry)
+happened partly *because* the reference material was speculative rather
+than sourced from real boxes. A lightweight way for operators to
+contribute real, verified numbers back would let this table (and a
+running community dataset — model × Mac chip × RAM tier → actual
+tokens/sec, actual resident memory, actual TTFT) replace guesswork with
+observed reality over time.
+
+**What it is:** A new `headless-macs` capability (subcommand and/or TUI
+screen — not sized yet which) that captures a point-in-time snapshot of
+the running node and exports it as a well-structured Markdown file, ready
+to become a GitHub issue on this repo. Nothing is transmitted
+automatically — the file is generated locally, the operator reviews it,
+and *they* decide whether and how to share it.
+
+**What to capture:**
+- **Hardware**: Mac model identifier (`Mac16,9`-style, already gathered by
+  Precheck's `HardwareSnapshot`), chip, total RAM, core counts, form
+  factor — all already collected by `internal/ops/precheck.go`, no new
+  detection needed.
+- **Serving configuration**: which tool(s) are enabled (`internal/ops/status.go`
+  already enumerates managed daemons), and — this needs to be a live
+  check, not a read of `config.json`, since config states *intent* and
+  this needs to confirm *actual, currently-loaded* state — which model is
+  genuinely loaded and serving right now. Ollama's `/api/ps` (currently
+  loaded models) is the direct source for that; other tools would need
+  an equivalent live probe rather than trusting their config file.
+- **Resident memory**: `internal/ops/status.go`'s `RunStatus()` already
+  gathers RSS per managed daemon PID — directly reusable, no new work.
+- **Inference performance (tokens/sec, TTFT)**: needs new work — probing
+  a running model with a small canned prompt and measuring the response.
+  Ollama's own `/api/generate` response already returns exactly this
+  (`eval_count`/`eval_duration` → tokens/sec, `prompt_eval_duration` →
+  time-to-first-token) with no extra instrumentation needed — the other
+  four tools would each need their own probe/measurement approach, which
+  isn't sized here.
+
+**What must never be captured (PII / identifying information):**
+IP addresses, hostnames, MAC addresses, usernames, home directory paths
+in model file paths, `tools.exo.bootstrap_peers` (other nodes' network
+addresses), and anything else that identifies the operator or their
+network — this needs an explicit denylist/scrub step reviewed carefully
+before this ships, not just "avoid the obvious fields." The exported file
+should be safe to paste into a public GitHub issue without a second look,
+by design, not by operator diligence.
+
+**Output format:** A single Markdown file (matching this project's
+existing docs style — tables, not prose, for the data) containing the
+captured fields above, plus instructions at the top of the file itself
+for how to turn it into an issue:
+1. Manually: copy the file's contents into a new issue at this repo's
+   `/issues/new`.
+2. Automatically, if the `gh` CLI happens to be on `PATH`: a ready-to-run
+   `gh issue create --title "..." --body-file <path>` command line,
+   printed for the operator to copy-paste and run themselves — not
+   executed by `headless-macs` on the operator's behalf, and not gated on
+   `gh` actually being present (most boxes won't have it; the manual path
+   must work standalone regardless).
+
+**Deliberately left open, not decided:** `headless-macs` should not grow
+its own GitHub API client (issue creation, auth/token handling) just for
+this — that's meaningfully more surface, maintenance, and credential
+handling than this project takes on anywhere else today. Whether there's
+a lighter-weight automation path worth adding later (a documented
+`gh`-based one-liner is probably enough) is left as an open question for
+whoever picks this up, not resolved here.
+
+**Scope:** Not sized. New capability, not an extension of an existing
+command — needs a `PHASE_N_PLAN.md` per the Planning convention before any
+code is written, including a decision on where this lives (new `snapshot`
+subcommand? TUI screen? both?) and exactly how the probe step measures
+tokens/sec and TTFT for the four non-Ollama tools.

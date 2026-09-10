@@ -118,6 +118,17 @@ type RunScreenModel struct {
 	scroll           int
 	width            int
 	height           int
+
+	// cachedRows is renderActions()'s output, rebuilt whenever a result or
+	// the width changes. Scroll bounds must be checked against this, not
+	// actionCount() — rows include section headers, blank separators, and
+	// a second row per action with a Detail, so bounding against the
+	// smaller raw action count undercounts and can strand the tail of a
+	// long list off-screen (the title-bar-disappears symptom). Same root
+	// cause issue #17 fixed in precheck_screen.go; this screen is a
+	// separate implementation that had the identical bug and was missed
+	// the first time — found live re-running Baseline after that fix.
+	cachedRows []string
 }
 
 func NewRunScreen(title string) RunScreenModel {
@@ -134,6 +145,9 @@ func (m RunScreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		if m.state == runStateDone {
+			m.cachedRows = m.renderActions()
+		}
 
 	case spinner.TickMsg:
 		if m.state == runStateRunning {
@@ -146,37 +160,43 @@ func (m RunScreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.result = msg.Result
 		m.err = msg.Err
 		m.state = runStateDone
+		m.cachedRows = m.renderActions()
 
 	case StorageDoneMsg:
 		m.storageResult = msg.Result
 		m.err = msg.Err
 		m.state = runStateDone
+		m.cachedRows = m.renderActions()
 
 	case ToolsDoneMsg:
 		m.toolsResult = msg.Result
 		m.err = msg.Err
 		m.state = runStateDone
+		m.cachedRows = m.renderActions()
 
 	case RestoreDoneMsg:
 		m.restoreResult = msg.Result
 		m.err = msg.Err
 		m.state = runStateDone
+		m.cachedRows = m.renderActions()
 
 	case UpdateDoneMsg:
 		m.updateResult = msg.Result
 		m.err = msg.Err
 		m.state = runStateDone
+		m.cachedRows = m.renderActions()
 
 	case DebugToolsDoneMsg:
 		m.debugToolsResult = msg.Result
 		m.err = msg.Err
 		m.state = runStateDone
+		m.cachedRows = m.renderActions()
 
 	case tea.KeyMsg:
 		if m.state != runStateDone {
 			break
 		}
-		n := m.actionCount()
+		n := len(m.cachedRows)
 		visible := m.visibleRows()
 		switch msg.String() {
 		case "up", "k":
@@ -244,7 +264,7 @@ func (m RunScreenModel) Body() string {
 	}
 
 	if m.stageActions() != nil {
-		rows := m.renderActions()
+		rows := m.cachedRows
 		visible := m.visibleRows()
 
 		// Scroll-above indicator
@@ -304,10 +324,6 @@ func (m RunScreenModel) visibleRows() int {
 		v = 1
 	}
 	return v
-}
-
-func (m RunScreenModel) actionCount() int {
-	return len(m.stageActions())
 }
 
 func (m RunScreenModel) stageSummary() (sets, skips, warns, fails int, logPath string) {

@@ -153,6 +153,8 @@ sudo headless-macs-debug logs ollama   # same, narrowed to one tool (ollama, rap
 
 Each run forces an out-of-cycle rotation using the same shared `logrotate` config `install-tools` already writes (nothing new to configure), then bundles the result into a timestamped `tar.gz` under `/var/log/mac-llm-setup/bundles/` and prints its path. Pulling it off the box is a plain `scp` — this tool never pushes anywhere itself.
 
+> **Testing status:** the full flow — rotate, bundle, sudo NOPASSWD over non-interactive SSH, `scp` off the box — is live-verified end to end for `ollama` only. The other five tools' log directories (`rapid-mlx`, `mlx-lm`, `infinity`, `exo`, `macmon`) are structurally identical, but haven't been exercised live since they aren't enabled on the boxes this was tested on. Treat those as untested, not broken, until confirmed.
+
 ### Passwordless sudo — an explicit escalation you opt into
 
 `headless-macs-debug logs` needs to run as root (log rotation has to truncate files it doesn't own), so over a plain SSH session you'd normally hit an interactive sudo password prompt — awkward for scripted/automated pulls. `headless-macs` can grant one specific user passwordless (`NOPASSWD`) sudo access for exactly that one binary, and only that binary — not `NOPASSWD: ALL`, not broader admin rights.

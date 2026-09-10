@@ -2,6 +2,17 @@
 /headless-macs
 /headless-macs-debug
 
+# go:embed target for headless-macs-debug — built fresh by `make
+# debug-binary`/`make build` every time, never committed. A Go build
+# isn't byte-reproducible across machines/toolchains even from identical
+# source (build-ID hashes, embedded paths), so tracking this as a real
+# binary meant every local `make build` permanently conflicted with
+# `git pull`. Run `make debug-binary` (or `make build`) once after
+# cloning before `go build ./...`/`go vet ./...`/`go test ./...` will
+# succeed directly — the same one-time bootstrap step many Go projects
+# need for a go:generate output.
+/internal/ops/assets/headless-macs-debug
+
 # Go build artifacts
 *.test
 *.out

@@ -21,6 +21,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/mediumroast/headless-macs/internal/config"
+	"github.com/mediumroast/headless-macs/internal/ops"
 )
 
 // Version is set by main.go via NewApp — no hardcoded string here.
@@ -44,22 +45,24 @@ const (
 	screenRestoreConfirm
 	screenRestore
 	screenUpdate
+	screenTeardownConfirm
 )
 
 // App is the top-level Bubble Tea model. It owns the sidebar, the active
 // content pane, and routes messages between them.
 type App struct {
-	screen         screen
-	configEditor   ConfigEditorModel
-	sidebar        MenuModel
-	dashboard      DashboardModel
-	precheck       PrecheckModel
-	runScreen      RunScreenModel
-	restoreConfirm RestoreConfirmModel
-	cfg            *config.Config
-	width          int
-	height         int
-	errMsg         string
+	screen          screen
+	configEditor    ConfigEditorModel
+	sidebar         MenuModel
+	dashboard       DashboardModel
+	precheck        PrecheckModel
+	runScreen       RunScreenModel
+	restoreConfirm  RestoreConfirmModel
+	teardownConfirm TeardownConfirmModel
+	cfg             *config.Config
+	width           int
+	height          int
+	errMsg          string
 }
 
 // NewApp creates the App. cfg is the loaded config (or nil on first run,
@@ -126,6 +129,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.runScreen = rs.(RunScreenModel)
 		rc, _ := a.restoreConfirm.Update(contentMsg)
 		a.restoreConfirm = rc.(RestoreConfirmModel)
+		tc, _ := a.teardownConfirm.Update(contentMsg)
+		a.teardownConfirm = tc.(TeardownConfirmModel)
 		return a, nil
 
 	case SavedMsg:
@@ -139,6 +144,46 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case DiscardMsg:
 		a.screen = screenDashboard
+		return a, nil
+
+	case TeardownPromptMsg:
+		_, contentW, paneH := a.contentDims()
+		a.teardownConfirm = NewTeardownConfirmModel(msg.Tools)
+		a.teardownConfirm.width, a.teardownConfirm.height = contentW, paneH
+		a.screen = screenTeardownConfirm
+		return a, nil
+
+	case TeardownChoiceMsg:
+		switch msg.Choice {
+		case teardownCancel:
+			// Restore Enabled=true for exactly the tools named — the
+			// operator said not to apply this change, so the working
+			// copy shouldn't silently keep it either.
+			reenableTools(a.configEditor.cfg, msg.Tools)
+			a.configEditor.fields = buildFields(a.configEditor.cfg)
+			a.screen = screenConfigEditor
+			return a, nil
+		case teardownStopAndUninstall:
+			for _, t := range msg.Tools {
+				res, err := ops.DisableTool(t)
+				if err != nil {
+					a.errMsg = err.Error()
+					continue
+				}
+				for _, act := range res.Actions {
+					if act.Status == ops.ActionWarn || act.Status == ops.ActionFail {
+						a.errMsg = act.Message
+					}
+				}
+			}
+			updated, cmd := a.configEditor.doSave()
+			a.configEditor = updated.(ConfigEditorModel)
+			return a, cmd
+		case teardownSaveOnly:
+			updated, cmd := a.configEditor.doSave()
+			a.configEditor = updated.(ConfigEditorModel)
+			return a, cmd
+		}
 		return a, nil
 
 	case DashboardTickMsg, DashboardDataMsg:
@@ -237,6 +282,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			updated, cmd := a.restoreConfirm.Update(msg)
 			a.restoreConfirm = updated.(RestoreConfirmModel)
 			return a, cmd
+		case screenTeardownConfirm:
+			updated, cmd := a.teardownConfirm.Update(msg)
+			a.teardownConfirm = updated.(TeardownConfirmModel)
+			return a, cmd
 		}
 	}
 
@@ -310,6 +359,8 @@ func (a App) activeBody() string {
 		return a.runScreen.Body()
 	case screenRestoreConfirm:
 		return a.restoreConfirm.Body()
+	case screenTeardownConfirm:
+		return a.teardownConfirm.Body()
 	}
 	return ""
 }
@@ -326,6 +377,8 @@ func (a App) activeStatusHints() string {
 		return a.runScreen.StatusHints()
 	case screenRestoreConfirm:
 		return a.restoreConfirm.StatusHints()
+	case screenTeardownConfirm:
+		return a.teardownConfirm.StatusHints()
 	}
 	return ""
 }
@@ -354,6 +407,8 @@ func (a App) screenName() string {
 		return "Restore"
 	case screenUpdate:
 		return "Update Tools"
+	case screenTeardownConfirm:
+		return "Confirm"
 	}
 	return a.sidebar.currentLabel()
 }

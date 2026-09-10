@@ -558,14 +558,19 @@ var phase8Suppressions = []struct {
 	// carrier bundles; largest unnecessary process by RSS on doppio-1.
 	{"com.apple.MobileAssetUpdater", "/System/Library/LaunchDaemons/com.apple.MobileAssetUpdater.plist"},
 	// Audio stack — no speakers, microphone, or audio use case headless;
-	// generates periodic CPU wakeups.
-	{"com.apple.audio.coreaudiod", ""},
-	{"com.apple.audiomxd", ""},
+	// generates periodic CPU wakeups. Plist paths confirmed on doppio-1
+	// and doppio-2 (`launchctl print` + a direct find on
+	// /System/Library/LaunchDaemons) — previously empty here, which
+	// skipped the bootout below and left these three running
+	// indefinitely after Baseline, regardless of SIP state. See
+	// PHASE_11_PLAN.md, Phase 11B / issue #14.
+	{"com.apple.audio.coreaudiod", "/System/Library/LaunchDaemons/com.apple.audio.coreaudiod.plist"},
+	{"com.apple.audiomxd", "/System/Library/LaunchDaemons/com.apple.audiomxd.plist"},
 	// Find My beaconing — periodically broadcasts location to Apple's Find
 	// My network; no value on a rack/desk inference node.
 	{"com.apple.findmybeaconingd", "/System/Library/LaunchDaemons/com.apple.findmybeaconingd.plist"},
 	// AirPlay receiver/sender helper — not needed headless.
-	{"com.apple.AirPlayXPCHelper", ""},
+	{"com.apple.AirPlayXPCHelper", "/System/Library/LaunchDaemons/com.apple.AirPlayXPCHelper.plist"},
 }
 
 // ---------------------------------------------------------------------------

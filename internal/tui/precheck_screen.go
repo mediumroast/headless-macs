@@ -59,6 +59,17 @@ type PrecheckModel struct {
 	scroll       int
 	width        int
 	height       int
+
+	// cachedRows is renderChecks()'s output, rebuilt only when the result
+	// changes (PrecheckDoneMsg/VerifyDoneMsg) rather than recomputed ad
+	// hoc. This is also what m.scroll must be bounded against — it has
+	// more entries than the raw check count (section headers, blank
+	// separators, and a second row per check with a Detail), and
+	// bounding scroll against the smaller raw count instead let the
+	// "N more above" indicator undercount and could make the tail of a
+	// long list
+	// unreachable. See issue #17.
+	cachedRows []string
 }
 
 func newPrecheckSpinner() spinner.Model {
@@ -83,6 +94,12 @@ func (m PrecheckModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		// renderChecks() truncates message/detail text to m.width, so a
+		// resize after the result is already loaded must rebuild the
+		// cache too, not just leave it truncated to the old width.
+		if m.state == precheckDone {
+			m.cachedRows = m.renderChecks()
+		}
 
 	case spinner.TickMsg:
 		if m.state == precheckRunning {
@@ -95,17 +112,19 @@ func (m PrecheckModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.result = msg.Result
 		m.err = msg.Err
 		m.state = precheckDone
+		m.cachedRows = m.renderChecks()
 
 	case VerifyDoneMsg:
 		m.verifyResult = msg.Result
 		m.err = msg.Err
 		m.state = precheckDone
+		m.cachedRows = m.renderChecks()
 
 	case tea.KeyMsg:
 		if m.state != precheckDone {
 			break
 		}
-		n := m.checkCount()
+		n := len(m.cachedRows)
 		visible := m.visibleRows()
 		switch msg.String() {
 		case "up", "k":
@@ -186,7 +205,7 @@ func (m PrecheckModel) Body() string {
 	}
 
 	if m.result != nil || m.verifyResult != nil {
-		rows := m.renderChecks()
+		rows := m.cachedRows
 		visible := m.visibleRows()
 
 		// Scroll-above indicator
@@ -248,16 +267,6 @@ func (m PrecheckModel) Body() string {
 	}
 
 	return b.String()
-}
-
-func (m PrecheckModel) checkCount() int {
-	if m.result != nil {
-		return len(m.result.Checks)
-	}
-	if m.verifyResult != nil {
-		return len(m.verifyResult.Checks)
-	}
-	return 0
 }
 
 func (m PrecheckModel) checks() []ops.CheckItem {

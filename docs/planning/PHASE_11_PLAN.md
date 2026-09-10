@@ -531,5 +531,41 @@ a new `docs/debugging-guide.md` (usage docs).
 
 ---
 
+## Implementation & closeout process
+
+- [ ] **Close each issue as its phase lands**, not all at once at the end
+      — as soon as a phase's fix is implemented and verified, close its
+      GitHub issue with a comment summarizing what actually changed
+      (file/line references, not just "fixed"), matching the level of
+      detail the issue's own diagnosis was filed with:
+      - Phase 11A → [#13](https://github.com/mediumroast/headless-macs/issues/13)
+      - Phase 11B → [#14](https://github.com/mediumroast/headless-macs/issues/14)
+      - Phase 11C → [#15](https://github.com/mediumroast/headless-macs/issues/15)
+      - Phase 11D → [#16](https://github.com/mediumroast/headless-macs/issues/16)
+      - Phase 11E → [#17](https://github.com/mediumroast/headless-macs/issues/17)
+      - Phase 11F has no filed issue (new feature, not a diagnosed bug) —
+        nothing to close for it.
+- [ ] **User will test the final build on doppio-1 and doppio-2**
+      directly — this is the live-verification step several phases
+      explicitly called for and this environment can't perform itself:
+      Phase 11B needs confirming `coreaudiod` doesn't respawn after the
+      new `bootout` calls; Phase 11E needs confirming the originally
+      -reported "title bar disappears while scrolling" symptom is
+      actually resolved by the scroll-index fix (not a separate
+      terminal-client issue, per that phase's own open caveat); Phase
+      11F's `NOPASSWD` sudo toggle and the `headless-macs-debug` binary
+      need a real SSH session to confirm the whole non-interactive
+      rotate+capture workflow actually works end to end.
+- [ ] **Once all of Phase 11 (11A–11F) is implemented and merged as
+      `v2.3.0`**, update the PR description (not just leave it as
+      originally opened) to include a summary of each closed issue and
+      what changed — not just bare links — and/or a link to this
+      planning document for full detail. Matches this project's existing
+      convention (`CLAUDE.md`'s PR-body convention, `CHANGELOG.md`'s
+      per-version `### PR` links) of a PR/changelog entry actually
+      summarizing content, not just pointing elsewhere.
+
+---
+
 **Status: awaiting review. Nothing implemented. Stopping here per
 instruction.**

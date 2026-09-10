@@ -95,28 +95,26 @@ prevents future starts but doesn't stop an already-running process. Three
 of seven `phase8Suppressions` entries have `Plist: ""`, which skips the
 `bootout` call every other entry gets.
 
-- [ ] **Before writing code:** confirm the real system plist paths for
-      these three services on a live box (`launchctl print
-      system/com.apple.audio.coreaudiod` etc., or
-      `find /System/Library/LaunchDaemons /System/Library/LaunchAgents
-      -iname '*coreaudiod*' -o -iname '*audiomxd*' -o -iname
-      '*AirPlayXPCHelper*'`). The issue itself flagged this as unconfirmed
-      — do not guess paths blind.
-- [ ] If a static plist path exists for each: fill in `Plist` in
-      `phase8Suppressions` (`internal/ops/baseline.go`), matching the
-      other four entries — the existing `bootout` call in the suppression
-      loop then covers them with no other code change needed.
-- [ ] If any of the three has **no** static plist (e.g. XPC-activated,
-      no `/System/Library/LaunchDaemons/*.plist`): `launchctl bootout`
-      needs the domain/service-target form instead
-      (`launchctl bootout system/<label>`) rather than a plist path —
-      `phase8Suppressions`' `Plist string` field may need to become an
-      enum/union (plist path vs. service target) to express this, or a
-      second small suppression list for label-only bootouts.
+- [x] **Confirmed on both doppio-1 and doppio-2** (identical results on
+      both, via `launchctl print` and a direct `find` cross-check — real
+      plist paths, not guessed): all three services have ordinary static
+      system LaunchDaemon plists, the same shape as the other four
+      `phase8Suppressions` entries. No enum/union or label-only bootout
+      fallback needed — the simple case applies.
+      ```
+      com.apple.audio.coreaudiod  → /System/Library/LaunchDaemons/com.apple.audio.coreaudiod.plist
+      com.apple.audiomxd          → /System/Library/LaunchDaemons/com.apple.audiomxd.plist
+      com.apple.AirPlayXPCHelper  → /System/Library/LaunchDaemons/com.apple.AirPlayXPCHelper.plist
+      ```
+- [ ] Fill in `Plist` for these three entries in `phase8Suppressions`
+      (`internal/ops/baseline.go`) with the paths above — the existing
+      `bootout` call in the suppression loop then covers them with no
+      other code change needed; this is now a one-line-per-service fix.
 - [ ] Confirm `coreaudiod` doesn't immediately respawn after a bare
       `bootout` without `disable` going first (order already correct in
       the existing loop — `disable` runs before `bootout` — just needs
-      confirming this actually holds for these three on a real box).
+      confirming this actually holds for these three on a real box, after
+      the fix lands).
 - [ ] Update `verify.go`'s corresponding checks (already correct today —
       they check live state — but confirm they still pass immediately
       after a single `Baseline` run once this fix lands, not just on
@@ -394,11 +392,8 @@ key, which it likely doesn't since group membership is a one-time
    or similarly-named subcommand for the wheel/permission toggle) — see
    Phase 11F's revised Q4 above.
 
-**Still open:**
-
-4. **Issue #14's plist-path confirmation** — commands to run on
-   doppio-1/doppio-2 are below; needs real output before this fix can be
-   written correctly rather than guessed.
+4. ~~Issue #14's plist-path confirmation~~ — **resolved**, see Phase 11B
+   above; both doppio-1 and doppio-2 agree.
 6. **`headless-macs-debug` implementation form** — shell script (simpler,
    matches "install a script" literally, embeds as a Go string constant
    like this project's plist content) vs. a second small Go binary (more
@@ -409,35 +404,44 @@ key, which it likely doesn't since group membership is a one-time
    operator to run `disable` themselves — leaning toward documented-only
    for v1 unless there's a strong preference otherwise.
 8. **Exact "more permissive" mode** for `/var/log/<service>` during an
-   active debug-access window — depends on the live-box commands below
-   confirming current real ownership/mode first.
+   active debug-access window — **partially resolved, one more data point
+   needed.** Both boxes confirm the *directory* is `_llmserver:_llmserver`
+   mode `755` (`rwxr-xr-x`) — which is already world-readable/traversable
+   as-is, so listing/reading rotated log *files* may not need any
+   permission change at all: the existing `create 644 _llmserver wheel`
+   logrotate line already makes rotated files world-readable (`644`) too.
+   What's still unknown is the mode of the **live, not-yet-rotated**
+   `stdout.log`/`stderr.log` files a daemon currently has open — those
+   aren't touched by the `create` directive (which only applies at
+   rotation time) and may have a tighter mode from whatever umask the
+   daemon itself writes with. That's the actually relevant unknown for
+   deciding whether the debug-access toggle needs to change anything at
+   all, or whether `headless-macs-debug logs` can just force a rotation
+   (making everything world-readable via the existing `create` line) and
+   skip the wheel/permission-toggle machinery entirely for *read* access —
+   possibly narrowing Q2/Q3's toggle to just what's needed for *running*
+   the rotation itself (which needs root, not group membership). One more
+   command below resolves this.
 
 ---
 
-## Commands to run on doppio-1 and doppio-2 (for open question #4)
+## One remaining command to run on doppio-1 and doppio-2 (open question #8)
 
-Confirms real plist paths (or lack thereof) for the three Issue #14
-services, and the real current ownership/mode of a representative log
-directory (for open question #8). Read-only — nothing here changes
-system state.
+The plist-path commands are done — both boxes agreed, see Phase 11B.
+Only the live-log-file mode is still needed. Read-only.
 
 ```bash
-# Plist paths (or "Could not find" if none / not a static LaunchDaemon)
-for label in com.apple.audio.coreaudiod com.apple.audiomxd com.apple.AirPlayXPCHelper; do
-  echo "=== $label ==="
-  sudo launchctl print system/$label 2>&1 | grep -E "path = |state = "
-done
-
-# Cross-check against on-disk plists directly, in case launchctl print
-# is unreliable for any of these (e.g. XPC-activated, no static entry)
-sudo find /System/Library/LaunchDaemons /System/Library/LaunchAgents \
-  -iname '*coreaudiod*' -o -iname '*audiomxd*' -o -iname '*AirPlayXPCHelper*'
-
-# Current real ownership/mode of one managed log directory, for the
-# debug-access permission-toggle design (Q2/Q3)
-ls -ld /var/log/ollama
-stat -f '%Su:%Sg %OLp' /var/log/ollama
+ls -l /var/log/ollama/stdout.log /var/log/ollama/stderr.log
+stat -f '%Su:%Sg %OLp' /var/log/ollama/stdout.log /var/log/ollama/stderr.log
 ```
+
+If these come back `644` (or already group/world-readable some other
+way), reading logs needs no permission change at all — the debug-access
+toggle narrows to just what's needed to *run* `logrotate`/`headless-macs-debug`
+itself (root, or an explicit sudo invocation), not an ongoing group
+membership. If they come back tighter (e.g. `640` or `600`, owner-only),
+the toggle is doing real work and the `wheel`-based design stands as
+planned above.
 
 Paste the output back and I'll fill in the remaining unknowns in this
 plan before anything gets implemented.

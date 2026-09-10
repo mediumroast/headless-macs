@@ -579,6 +579,21 @@ var phase8Suppressions = []struct {
 
 const sshdDropinHeader = "# Managed by headless-macs — do not edit manually.\n# To change settings, re-run: sudo headless-macs\n"
 
+// sshEnabledLive reports whether com.openssh.sshd is actually running or
+// waiting (socket-activated) right now, per launchctl's own live state —
+// not whether `enable`/`kickstart` exited 0, which says nothing about
+// whether sshd actually came up (e.g. the systemsetup fallback is
+// documented broken on macOS 26 Tahoe, and even the primary path can
+// silently no-op if the daemon was never bootstrapped into the system
+// domain). Shared by sectionSSH() and RunVerify()'s SSH check so the two
+// can't tell an operator different stories about the same thing again —
+// found happening in practice, not hypothetically: see issue #15.
+func sshEnabledLive() bool {
+	out, _ := exec.Command("launchctl", "print", "system/com.openssh.sshd").Output()
+	s := string(out)
+	return strings.Contains(s, "state = running") || strings.Contains(s, "state = waiting")
+}
+
 func (r *BaselineResult) sectionSSH() {
 	sec := "SSH"
 	ilog.Info("=== Section 4: SSH Hardening ===")
@@ -586,11 +601,18 @@ func (r *BaselineResult) sectionSSH() {
 	// Enable SSH — systemsetup is broken on macOS 26+; launchctl is primary
 	err1 := runCmd("launchctl", "enable", "system/com.openssh.sshd")
 	err2 := runCmd("launchctl", "kickstart", "-k", "system/com.openssh.sshd")
-	if err1 == nil && err2 == nil {
-		r.add(sec, ActionSet, "SSH enabled via launchctl", "")
-	} else {
+	if err1 != nil || err2 != nil {
 		_ = runCmd("systemsetup", "-setremotelogin", "on")
-		r.add(sec, ActionSet, "SSH enabled via systemsetup (fallback)", "")
+	}
+	// Report success only if sshd is actually confirmed running afterward —
+	// exit codes above say nothing about that. This is the fix for issue
+	// #15: previously this reported [SET] unconditionally from exit codes
+	// alone, so it could (and did) disagree with Verify's real check.
+	if sshEnabledLive() {
+		r.add(sec, ActionSet, "SSH enabled and confirmed running (com.openssh.sshd)", "")
+	} else {
+		r.add(sec, ActionWarn, "SSH enable attempted but sshd is not confirmed running",
+			"Fix: sudo launchctl enable system/com.openssh.sshd && sudo launchctl kickstart -k system/com.openssh.sshd")
 	}
 
 	// Authorized keys check

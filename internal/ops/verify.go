@@ -318,10 +318,10 @@ func (r *VerifyResult) sectionSystem(cfg *config.Config, sipEnabled bool) {
 		r.warn(sec, "Spotlight indexing may be active", "Fix: sudo mdutil -a -i off")
 	}
 
-	// SSH — check via launchctl (macOS 26 uses socket activation; port binding is unreliable)
-	sshOut, _ := exec.Command("launchctl", "print", "system/com.openssh.sshd").Output()
-	if strings.Contains(string(sshOut), "state = running") ||
-		strings.Contains(string(sshOut), "state = waiting") {
+	// SSH — check via launchctl (macOS 26 uses socket activation; port
+	// binding is unreliable). Shared with sectionSSH() in baseline.go
+	// (sshEnabledLive()) so the two can't drift apart — see issue #15.
+	if sshEnabledLive() {
 		r.pass(sec, "SSH enabled (com.openssh.sshd running)", "")
 	} else {
 		r.warn(sec, "SSH not enabled",

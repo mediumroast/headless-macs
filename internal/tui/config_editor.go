@@ -17,6 +17,13 @@ import (
 type SavedMsg struct{ Cfg *config.Config }
 type DiscardMsg struct{}
 
+// TeardownPromptMsg is sent instead of saving directly when Save detects
+// one or more tools' `enabled` flag transitioned true -> false — routes
+// to a confirmation screen before anything touches disk, rather than
+// silently doing nothing (the previous behavior) or silently tearing
+// down a running daemon without asking. See issue #13.
+type TeardownPromptMsg struct{ Tools []string }
+
 type fieldKind int
 
 const (
@@ -54,6 +61,11 @@ type ConfigEditorModel struct {
 	scroll int
 	width  int
 	height int
+
+	// saveErr is set when a save was attempted but couldn't be verified
+	// (write failed, or a read-back didn't match what was written) —
+	// rendered instead of silently claiming [saved]. See issue #13.
+	saveErr string
 }
 
 // NewConfigEditor creates a config editor model for the given config.
@@ -71,8 +83,8 @@ func NewConfigEditor(cfg *config.Config) ConfigEditorModel {
 	ti.Width = 40
 
 	m := ConfigEditorModel{
-		cfg:      &working,
-		origJSON: origJSON,
+		cfg:       &working,
+		origJSON:  origJSON,
 		textInput: ti,
 	}
 	m.fields = buildFields(m.cfg)
@@ -129,10 +141,12 @@ func (m ConfigEditorModel) updateNavigating(msg tea.KeyMsg) (tea.Model, tea.Cmd)
 			m.editing = true
 		}
 	case "s", "S":
-		if err := config.Save(m.cfg); err == nil {
-			m.origJSON, _ = json.Marshal(m.cfg)
+		var orig config.Config
+		_ = json.Unmarshal(m.origJSON, &orig)
+		if disabled := disabledTools(&orig, m.cfg); len(disabled) > 0 {
+			return m, func() tea.Msg { return TeardownPromptMsg{Tools: disabled} }
 		}
-		return m, func() tea.Msg { return SavedMsg{Cfg: m.cfg} }
+		return m.doSave()
 	case "r", "R":
 		// Reset working copy to last saved state
 		var orig config.Config
@@ -190,6 +204,69 @@ func (m ConfigEditorModel) currentField() *field {
 	}
 	idx := m.editableIndices[m.cursorIdx]
 	return &m.fields[idx]
+}
+
+// disabledTools returns the config.json tool keys whose `enabled` flag
+// transitioned from true (orig) to false (cur) — the trigger for routing
+// through the teardown confirmation screen instead of saving directly.
+func disabledTools(orig, cur *config.Config) []string {
+	var out []string
+	check := func(key string, was, is bool) {
+		if was && !is {
+			out = append(out, key)
+		}
+	}
+	check("ollama", orig.Tools.Ollama.Enabled, cur.Tools.Ollama.Enabled)
+	check("rapid_mlx", orig.Tools.RapidMLX.Enabled, cur.Tools.RapidMLX.Enabled)
+	check("mlx_lm", orig.Tools.MLXLM.Enabled, cur.Tools.MLXLM.Enabled)
+	check("infinity", orig.Tools.Infinity.Enabled, cur.Tools.Infinity.Enabled)
+	check("exo", orig.Tools.Exo.Enabled, cur.Tools.Exo.Enabled)
+	check("macmon", orig.Tools.Macmon.Enabled, cur.Tools.Macmon.Enabled)
+	return out
+}
+
+// reenableTools restores Enabled=true for exactly the tool keys named —
+// used when the teardown confirmation screen is cancelled, so the
+// working copy doesn't silently keep a disabled state the operator just
+// said not to apply. See issue #13.
+func reenableTools(cfg *config.Config, tools []string) {
+	for _, t := range tools {
+		switch t {
+		case "ollama":
+			cfg.Tools.Ollama.Enabled = true
+		case "rapid_mlx":
+			cfg.Tools.RapidMLX.Enabled = true
+		case "mlx_lm":
+			cfg.Tools.MLXLM.Enabled = true
+		case "infinity":
+			cfg.Tools.Infinity.Enabled = true
+		case "exo":
+			cfg.Tools.Exo.Enabled = true
+		case "macmon":
+			cfg.Tools.Macmon.Enabled = true
+		}
+	}
+}
+
+// doSave writes the working config to disk and reads it back to confirm
+// the write actually took effect, instead of trusting Save()'s nil error
+// alone — surfaces a clear error in the UI (m.saveErr) rather than
+// silently claiming [saved] when something went wrong. See issue #13.
+func (m ConfigEditorModel) doSave() (tea.Model, tea.Cmd) {
+	m.saveErr = ""
+	if err := config.Save(m.cfg); err != nil {
+		m.saveErr = "save failed: " + err.Error()
+		return m, nil
+	}
+	reloaded, err := config.Load()
+	wantJSON, _ := json.Marshal(m.cfg)
+	gotJSON, _ := json.Marshal(reloaded)
+	if err != nil || string(wantJSON) != string(gotJSON) {
+		m.saveErr = "save did not verify — re-read config did not match what was written"
+		return m, nil
+	}
+	m.origJSON, _ = json.Marshal(m.cfg)
+	return m, func() tea.Msg { return SavedMsg{Cfg: m.cfg} }
 }
 
 func (m ConfigEditorModel) isModified() bool {
@@ -263,9 +340,12 @@ func (m ConfigEditorModel) Body() string {
 
 	cfgPath := config.UserConfigPath()
 	var stateStr string
-	if m.isModified() {
+	switch {
+	case m.saveErr != "":
+		stateStr = styleError.Render("[save failed: " + m.saveErr + "]")
+	case m.isModified():
 		stateStr = styleStatusModified.Render("[modified]")
-	} else {
+	default:
 		stateStr = styleStatusSaved.Render("[saved]")
 	}
 	b.WriteString(styleFieldValue.Render("  "+cfgPath+"  ") + stateStr)
@@ -453,6 +533,10 @@ func buildFields(cfg *config.Config) []field {
 	// ── TUI ───────────────────────────────────────────────────
 	f = append(f, field{kind: kindSectionHeader, label: "TUI"})
 	f = append(f, intField("Dashboard Refresh (ms)", func() int { return cfg.TUI.DashboardRefreshMs }, func(v int) { cfg.TUI.DashboardRefreshMs = v }))
+
+	// ── DEBUG ─────────────────────────────────────────────────
+	f = append(f, field{kind: kindSectionHeader, label: "DEBUG"})
+	f = append(f, boolField("Sudo NOPASSWD for headless-macs-debug", func() bool { return cfg.Debug.SudoNopasswdEnabled }, func(v bool) { cfg.Debug.SudoNopasswdEnabled = v }))
 
 	return f
 }

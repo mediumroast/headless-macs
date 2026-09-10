@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -36,6 +37,8 @@ Commands (run non-interactively, output to stdout + log):
   update-tools    In-place binary upgrade for all enabled serving tools
   storage         Configure external model storage volume
   status          What's running and what it's costing you (add --watch to refresh)
+  debug-tools     Install/update headless-macs-debug and sync its NOPASSWD
+                  sudo grant to the debug.sudo_nopasswd_enabled config toggle
 
   (no command)    Launch the interactive TUI
 
@@ -70,7 +73,7 @@ func main() {
 	}
 	if len(args) > 0 {
 		switch args[0] {
-		case "precheck", "baseline", "install-tools", "verify", "restore", "update-tools", "storage", "status":
+		case "precheck", "baseline", "install-tools", "verify", "restore", "update-tools", "storage", "status", "debug-tools":
 			runCLI(args[0], args[1:])
 			return
 		default:
@@ -113,7 +116,17 @@ func runTUI() {
 	}
 
 	app := tui.NewApp(cfg, firstRun)
-	p := tea.NewProgram(app, tea.WithAltScreen())
+	// WithMouseCellMotion is required, not cosmetic: tea.WithAltScreen()
+	// alone does not stop a terminal from doing its own native viewport
+	// scroll on a trackpad/scroll-wheel gesture — confirmed on macOS
+	// Terminal.app in charmbracelet/bubbletea#349. Without mouse capture,
+	// that native scroll shifts the terminal's own viewport independent
+	// of anything this app draws, which is what was making the title bar
+	// scroll out of view on long result lists (Verify, Baseline) while
+	// leaving the footer visible — not a rendering bug in this app's own
+	// frame composition. Capturing mouse events routes scroll gestures to
+	// bubbletea as MouseMsg instead of letting the terminal handle them.
+	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		os.Exit(1)
@@ -225,7 +238,34 @@ func runCLI(cmd string, rest []string) {
 		if r.Failures > 0 {
 			os.Exit(1)
 		}
+
+	case "debug-tools":
+		var username string
+		if cfg.Debug.SudoNopasswdEnabled {
+			username = promptUsername()
+		}
+		r, err := ops.RunDebugTools(cfg.Debug.SudoNopasswdEnabled, username)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			os.Exit(1)
+		}
+		if r.LogPath != "" {
+			fmt.Printf("Log written to: %s\n", r.LogPath)
+		}
+		if r.Failures > 0 {
+			os.Exit(1)
+		}
 	}
+}
+
+// promptUsername asks for the operator user to grant NOPASSWD sudo access
+// to, on stdin — never stored in config.json, always collected fresh at
+// the moment the toggle is applied. See PHASE_11_PLAN.md, Phase 11F.
+func promptUsername() string {
+	fmt.Print("Username to grant passwordless sudo for headless-macs-debug: ")
+	reader := bufio.NewReader(os.Stdin)
+	line, _ := reader.ReadString('\n')
+	return strings.TrimSpace(line)
 }
 
 // ---------------------------------------------------------------------------

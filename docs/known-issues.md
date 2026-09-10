@@ -153,3 +153,11 @@ csrutil status
 | Issue | Affects | Symptom | Fix |
 |---|---|---|---|
 | **No display = wrong GPU paths on M4 Mac Mini** | M4 Mac Mini headless | Some GPU acceleration paths not available | Connect an HDMI dummy plug. Required for proper framebuffer initialisation and correct VNC resolution. |
+
+---
+
+## Pulling logs without the full TUI
+
+| Issue | Affects | Symptom | Fix |
+|---|---|---|---|
+| **Need to grab logs over a scripted/automated SSH session** | Any node | `headless-macs-debug logs` needs root (rotation truncates files it doesn't own) and an interactive sudo password prompt breaks non-interactive automation | See README.md's "Debugging Tools" section — `headless-macs-debug` bundles rotated logs into a `scp`-able tar.gz, with an optional narrowly-scoped, toggleable `NOPASSWD` sudo grant for exactly that one binary when you need it passwordless. |

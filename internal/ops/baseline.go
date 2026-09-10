@@ -2,6 +2,7 @@ package ops
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -558,14 +559,19 @@ var phase8Suppressions = []struct {
 	// carrier bundles; largest unnecessary process by RSS on doppio-1.
 	{"com.apple.MobileAssetUpdater", "/System/Library/LaunchDaemons/com.apple.MobileAssetUpdater.plist"},
 	// Audio stack — no speakers, microphone, or audio use case headless;
-	// generates periodic CPU wakeups.
-	{"com.apple.audio.coreaudiod", ""},
-	{"com.apple.audiomxd", ""},
+	// generates periodic CPU wakeups. Plist paths confirmed on doppio-1
+	// and doppio-2 (`launchctl print` + a direct find on
+	// /System/Library/LaunchDaemons) — previously empty here, which
+	// skipped the bootout below and left these three running
+	// indefinitely after Baseline, regardless of SIP state. See
+	// PHASE_11_PLAN.md, Phase 11B / issue #14.
+	{"com.apple.audio.coreaudiod", "/System/Library/LaunchDaemons/com.apple.audio.coreaudiod.plist"},
+	{"com.apple.audiomxd", "/System/Library/LaunchDaemons/com.apple.audiomxd.plist"},
 	// Find My beaconing — periodically broadcasts location to Apple's Find
 	// My network; no value on a rack/desk inference node.
 	{"com.apple.findmybeaconingd", "/System/Library/LaunchDaemons/com.apple.findmybeaconingd.plist"},
 	// AirPlay receiver/sender helper — not needed headless.
-	{"com.apple.AirPlayXPCHelper", ""},
+	{"com.apple.AirPlayXPCHelper", "/System/Library/LaunchDaemons/com.apple.AirPlayXPCHelper.plist"},
 }
 
 // ---------------------------------------------------------------------------
@@ -574,6 +580,32 @@ var phase8Suppressions = []struct {
 
 const sshdDropinHeader = "# Managed by headless-macs — do not edit manually.\n# To change settings, re-run: sudo headless-macs\n"
 
+// sshEnabledLive reports whether sshd is actually reachable on port 22 right
+// now — not whether `enable`/`kickstart` exited 0 (see issue #15), and not
+// by parsing `launchctl print`'s internal state field either (tried first,
+// abandoned: com.openssh.sshd is inetd-compatible/socket-activated, so its
+// top-level state legitimately reads "not running" while idle — launchd
+// only spawns a process per connection. The only "state = active" fields in
+// its print output belong to the resource/jetsam coalitions, unrelated
+// bookkeeping that happened to also contain the word "active". There's no
+// launchd state string that means "armed and listening" for this service
+// class in a way worth depending on.). A live TCP dial that reads back the
+// "SSH-" protocol banner is what every other tool's checkEndpoint() does
+// over HTTP — testing the real thing sshd promises, not launchd's account
+// of it. Shared by sectionSSH() and RunVerify()'s SSH check so the two
+// can't tell an operator different stories about the same thing again.
+func sshEnabledLive() bool {
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:22", 3*time.Second)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buf := make([]byte, 32)
+	n, _ := conn.Read(buf)
+	return strings.HasPrefix(string(buf[:n]), "SSH-")
+}
+
 func (r *BaselineResult) sectionSSH() {
 	sec := "SSH"
 	ilog.Info("=== Section 4: SSH Hardening ===")
@@ -581,11 +613,18 @@ func (r *BaselineResult) sectionSSH() {
 	// Enable SSH — systemsetup is broken on macOS 26+; launchctl is primary
 	err1 := runCmd("launchctl", "enable", "system/com.openssh.sshd")
 	err2 := runCmd("launchctl", "kickstart", "-k", "system/com.openssh.sshd")
-	if err1 == nil && err2 == nil {
-		r.add(sec, ActionSet, "SSH enabled via launchctl", "")
-	} else {
+	if err1 != nil || err2 != nil {
 		_ = runCmd("systemsetup", "-setremotelogin", "on")
-		r.add(sec, ActionSet, "SSH enabled via systemsetup (fallback)", "")
+	}
+	// Report success only if sshd is actually confirmed running afterward —
+	// exit codes above say nothing about that. This is the fix for issue
+	// #15: previously this reported [SET] unconditionally from exit codes
+	// alone, so it could (and did) disagree with Verify's real check.
+	if sshEnabledLive() {
+		r.add(sec, ActionSet, "SSH enabled and confirmed running (com.openssh.sshd)", "")
+	} else {
+		r.add(sec, ActionWarn, "SSH enable attempted but sshd is not confirmed running",
+			"Fix: sudo launchctl enable system/com.openssh.sshd && sudo launchctl kickstart -k system/com.openssh.sshd")
 	}
 
 	// Authorized keys check

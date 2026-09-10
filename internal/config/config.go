@@ -4,6 +4,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -16,6 +17,17 @@ type Config struct {
 	System  System  `json:"system"`
 	Network Network `json:"network"`
 	TUI     TUI     `json:"tui"`
+	Debug   Debug   `json:"debug"`
+}
+
+// Debug holds settings for headless-macs-debug, the standalone debugging
+// utility (Phase 11F). Added for its NOPASSWD sudo toggle.
+type Debug struct {
+	// SudoNopasswdEnabled declares intent only — the target username is
+	// never stored here (prompted interactively and validated at the
+	// moment the toggle is applied, not persisted), so `headless-macs
+	// debug-tools` is what actually syncs /etc/sudoers.d to match this.
+	SudoNopasswdEnabled bool `json:"sudo_nopasswd_enabled"`
 }
 
 // TUI holds settings for the interactive terminal UI itself, as opposed
@@ -167,16 +179,43 @@ func loadFrom(path string) (*Config, error) {
 	if err := json.Unmarshal(data, &c); err != nil {
 		return nil, err
 	}
+
+	// Auto-migrate: a config file written before a schema addition (e.g.
+	// the macmon or tui sections) unmarshals fine — Go leaves the new
+	// fields at their zero value — but the file on disk stays on the old
+	// shape until something else happens to save it, which may never
+	// happen. Re-marshaling and comparing catches that gap immediately on
+	// load rather than leaving it to an unrelated future save. Harmless
+	// when the only difference is formatting (field order, whitespace) —
+	// this just re-normalizes the file in that case too. See issue #13.
+	//
+	// Writes back to `path` specifically, not UserConfigPath() via
+	// Save() — loadFrom is also used in tests with an arbitrary temp
+	// path, and writing to the real user config as a side effect of
+	// loading a different file would be a bug in its own right.
+	if patched, err := json.MarshalIndent(&c, "", "  "); err == nil {
+		if !bytes.Equal(bytes.TrimSpace(data), bytes.TrimSpace(patched)) {
+			_ = saveTo(path, &c)
+		}
+	}
+
 	return &c, nil
 }
 
 // Save writes the config back to the user config file atomically.
 func Save(c *Config) error {
+	return saveTo(UserConfigPath(), c)
+}
+
+// saveTo writes c to dest atomically (write to a .tmp file, then rename).
+// Shared by Save() (always UserConfigPath()) and loadFrom()'s
+// auto-migrate step (whatever path it was given, which is UserConfigPath()
+// in real usage but may be a test's temp file).
+func saveTo(dest string, c *Config) error {
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	dest := UserConfigPath()
 	tmp := dest + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err

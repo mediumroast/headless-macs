@@ -72,5 +72,8 @@
   },
   "tui": {
     "dashboard_refresh_ms": 2000
+  },
+  "debug": {
+    "sudo_nopasswd_enabled": false
   }
 }

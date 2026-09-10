@@ -2,6 +2,7 @@ package ops
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -579,19 +580,30 @@ var phase8Suppressions = []struct {
 
 const sshdDropinHeader = "# Managed by headless-macs — do not edit manually.\n# To change settings, re-run: sudo headless-macs\n"
 
-// sshEnabledLive reports whether com.openssh.sshd is actually running or
-// waiting (socket-activated) right now, per launchctl's own live state —
-// not whether `enable`/`kickstart` exited 0, which says nothing about
-// whether sshd actually came up (e.g. the systemsetup fallback is
-// documented broken on macOS 26 Tahoe, and even the primary path can
-// silently no-op if the daemon was never bootstrapped into the system
-// domain). Shared by sectionSSH() and RunVerify()'s SSH check so the two
-// can't tell an operator different stories about the same thing again —
-// found happening in practice, not hypothetically: see issue #15.
+// sshEnabledLive reports whether sshd is actually reachable on port 22 right
+// now — not whether `enable`/`kickstart` exited 0 (see issue #15), and not
+// by parsing `launchctl print`'s internal state field either (tried first,
+// abandoned: com.openssh.sshd is inetd-compatible/socket-activated, so its
+// top-level state legitimately reads "not running" while idle — launchd
+// only spawns a process per connection. The only "state = active" fields in
+// its print output belong to the resource/jetsam coalitions, unrelated
+// bookkeeping that happened to also contain the word "active". There's no
+// launchd state string that means "armed and listening" for this service
+// class in a way worth depending on.). A live TCP dial that reads back the
+// "SSH-" protocol banner is what every other tool's checkEndpoint() does
+// over HTTP — testing the real thing sshd promises, not launchd's account
+// of it. Shared by sectionSSH() and RunVerify()'s SSH check so the two
+// can't tell an operator different stories about the same thing again.
 func sshEnabledLive() bool {
-	out, _ := exec.Command("launchctl", "print", "system/com.openssh.sshd").Output()
-	s := string(out)
-	return strings.Contains(s, "state = running") || strings.Contains(s, "state = waiting")
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:22", 3*time.Second)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buf := make([]byte, 32)
+	n, _ := conn.Read(buf)
+	return strings.HasPrefix(string(buf[:n]), "SSH-")
 }
 
 func (r *BaselineResult) sectionSSH() {

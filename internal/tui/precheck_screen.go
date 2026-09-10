@@ -210,7 +210,8 @@ func (m PrecheckModel) Body() string {
 
 		// Scroll-above indicator
 		if m.scroll > 0 {
-			b.WriteString(styleKeyHint.Render(fmt.Sprintf("  ↑  %d more above\n", m.scroll)))
+			b.WriteString(styleKeyHint.Render(fmt.Sprintf("  ↑  %d more above", m.scroll)))
+			b.WriteByte('\n')
 		} else {
 			b.WriteByte('\n')
 		}
@@ -234,7 +235,8 @@ func (m PrecheckModel) Body() string {
 		// Scroll-below indicator
 		remaining := len(rows) - end
 		if remaining > 0 {
-			b.WriteString(styleKeyHint.Render(fmt.Sprintf("  ↓  %d more below\n", remaining)))
+			b.WriteString(styleKeyHint.Render(fmt.Sprintf("  ↓  %d more below", remaining)))
+			b.WriteByte('\n')
 		} else {
 			b.WriteByte('\n')
 		}

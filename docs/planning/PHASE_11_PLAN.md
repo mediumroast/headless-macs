@@ -379,8 +379,12 @@ non-trivial build-ordering change worth flagging, not a one-line addition.
       `visudo -c` before installing — a malformed sudoers file is a real
       way to break `sudo` system-wide, this check is not optional) when
       `true` and the file is missing; removes it when `false` and present.
-      Needs a target username — the config key's value, or derived from
-      `SUDO_USER`/an explicit prompt; TBD which.
+      **Per user decision:** the target username is not stored in
+      `config.json` at all — prompted interactively at the moment
+      `debug-tools` applies an `enable`, and validated (`id <username>`
+      or `dscl . -read /Users/<username>`) before the sudoers drop-in is
+      written; refuses clearly, writes nothing, if the user doesn't
+      exist. `disable` needs no username — it just removes the drop-in.
 - [ ] **`README.md` documentation of the escalation/de-escalation path**
       (explicit user requirement) — a new section (near the existing
       "Security scope" callout, matching its tone) explaining: exactly
@@ -400,13 +404,16 @@ non-trivial build-ordering change worth flagging, not a one-line addition.
       Debugging Tools" (exact label TBD, needs to fit the sidebar's width
       budget — see `internal/tui/menu.go`'s existing items for the
       established naming length/style) — `internal/tui/menu.go`
-      (`menuItems` list) plus a new screen or reuse of the existing
-      `RunScreen` pattern already used for Baseline/Install Tools/Update
-      Tools/Storage (`internal/tui/run_screen.go` already generically
-      renders any `ops` result's `[SET]`/`[SKIP]`/`[WARN]` actions — this
-      should slot in without a new screen type, since `RunDebugTools()`'s
-      output is the same `[SET]`/`[SKIP]`/`[WARN]` action-list shape as
-      every other ops function).
+      (`menuItems` list). **Revised per the interactive-username
+      decision above:** this can no longer be a pure `RunScreen` reuse
+      when enabling the toggle — it needs a short text-input step first
+      (reusing `config_editor.go`'s existing text-edit-mode UI, not a new
+      pattern) to collect and validate the username, *then* runs and
+      reports via the same `RunScreen`-style `[SET]`/`[SKIP]`/`[WARN]`
+      list every other action screen already uses, since `RunDebugTools()`'s
+      output is the same `[SET]`/`[SKIP]`/`[WARN]` action-list shape every
+      other `ops` function already produces. Disabling the toggle needs no
+      username and can stay a plain `RunScreen` reuse throughout.
 
 **Scope:** New capability — Minor version bump (new subcommand, new
 `cmd/` build target, new `config.json` key, new sudoers-file management).
@@ -470,23 +477,30 @@ a new `docs/debugging-guide.md` (usage docs).
    config, so this almost certainly generalizes, but wasn't independently
    spot-checked for the other four tools — low-risk to leave unverified.
 
-**Still open:**
+**Resolved (user decision):**
 
-9. **`debug.sudo_nopasswd_enabled` target username** — the sudoers grant
-   needs a specific username to scope to. Options: a second config key
-   naming the operator explicitly, derive from `SUDO_USER` at the moment
-   `debug-tools` is run (simplest, but ties the grant to whoever happened
-   to run the install step), or prompt interactively in the TUI. Needs a
-   decision before implementation.
-10. **Exact `Cmnd_Alias` scope** — pin the `NOPASSWD` grant to the whole
-    `/usr/local/bin/headless-macs-debug` path (simpler sudoers rule,
-    covers future subcommands without re-editing sudoers each time,
-    relies on the binary's own internal logic to stay narrow) vs. pin it
-    to `/usr/local/bin/headless-macs-debug logs` specifically (tighter,
-    but needs a sudoers update if a second subcommand is added later
-    that also needs root). Leaning toward the whole-binary-path grant
-    given `headless-macs-debug` is a small, purpose-built, project-owned
-    binary rather than something with a large or untrusted surface — but
+9. ~~`debug.sudo_nopasswd_enabled` target username~~ — **resolved:
+   prompt interactively, and validate the named user actually exists
+   before writing anything to sudoers.** Not derived from `SUDO_USER`,
+   not a second config key holding a name that could go stale. Concretely:
+   `RunDebugTools()`/`headless-macs debug-tools` prompts for a username
+   (CLI: a plain stdin prompt; TUI: see the consequence noted below),
+   checks it with `id <username>` (or `dscl . -read /Users/<username>`)
+   before writing the sudoers drop-in, and refuses with a clear error —
+   not a partial/broken sudoers file — if the user doesn't exist.
+   **Consequence for the TUI design in Q4 above:** this means the
+   "Install/Update Debugging Tools" screen can't be a pure
+   run-and-report `RunScreen` reuse after all when enabling the toggle —
+   it needs an interactive text-input step first (matching
+   `config_editor.go`'s existing text-edit mode, which already has the
+   UI pattern this needs), then runs and reports. Still no *new* UI
+   pattern needs inventing, just composing two that already exist
+   (`config_editor.go`'s text input + `run_screen.go`'s result list),
+   rather than the single-screen-reuse assumption Q4 originally stated.
+10. ~~Exact `Cmnd_Alias` scope~~ — **resolved: pin to the whole
+    `/usr/local/bin/headless-macs-debug` path**, not the `logs`
+    subcommand specifically — matches the recommendation, confirmed by
+    the user.
     flagging the tradeoff rather than deciding unilaterally.
 
 ---

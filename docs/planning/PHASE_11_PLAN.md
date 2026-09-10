@@ -262,40 +262,42 @@ framework, and directory-level ownership (`_llmserver:_llmserver`, set
 at daemon-install time) is a separate, narrower thing from the
 rotated-file group logrotate itself assigns.
 
-**User's proposed design, adopted:** rather than a standing permission
-change, an explicit **debug-mode toggle** — enabling it adds the
-operator's user to `wheel` and loosens `/var/log/<service>` permissions;
-disabling it removes the user from `wheel` and restores the tighter
-mode. This is a materially better answer than either the original literal
-ask (permanent `774` + standing `wheel` membership) or this plan's first
-recommendation (a second group) — it keeps the existing, already-stable
-rotation/ownership framework completely untouched (addressing the user's
-stated concern directly: no rework of something that already works), and
-confines the broader `wheel` membership to a short, explicit, reversible
-window instead of a permanent state.
+**Finding that changes the plan again, confirmed on both boxes:** the
+*live* (not-yet-rotated) `stdout.log`/`stderr.log` files are already
+`_llmserver:wheel 644` — `rw-r--r--`, world-readable — not just the
+directory. So there is, right now, **no read-access gap to solve at all**:
+any user on the box can already read Ollama's logs, live or rotated,
+today. This wasn't obvious from the directory-level check alone (which
+only confirmed the directory itself, `755`, was already permissive) —
+the file-level check was the piece that actually settles it.
 
-- [ ] `headless-macs debug` (or a subcommand of it) gets an
-      enable/disable toggle for "debug access": `enable` adds the
-      current/specified operator user to `wheel` and sets
-      `/var/log/<service>` directories to a more permissive mode (exact
-      mode TBD — e.g. `0750`→`0770`, keeping `_llmserver` as owner but
-      granting the (now-`wheel`-member) operator group-level access
-      however group membership resolves that; needs the real current mode
-      confirmed on a live box before picking the "more permissive" target
-      precisely). `disable` reverses both.
-- [ ] Needs a clear default: debug access should almost certainly default
-      **disabled**, and probably auto-expire or at least nag if left
-      enabled (the user's own framing is "short duration to handle
-      debugging," not a standing state) — worth deciding whether this is
-      enforced (a timer that reverts it) or just documented/left to
-      operator discipline. Leaning toward documented-only for v1 (an
-      auto-revert timer is real extra complexity — a new LaunchDaemon or
-      similar — for a feature whose whole point is being simple and
-      short-lived); flagging as a decision point, not deciding here.
-- [ ] Does **not** change the existing `create 644 _llmserver wheel`
-      logrotate stanza at all — that keeps working exactly as it does
-      today regardless of debug-mode state, per the "don't rework what's
-      stable" concern.
+- [x] **No debug-access toggle needed for read access.** Dropped from
+      scope. `headless-macs-debug logs` doesn't need to change any
+      permission or add anyone to any group to let an operator read or
+      `scp` a log — that already works.
+- [ ] What `headless-macs-debug logs` *does* still need privilege for is
+      **triggering rotation itself** (`logrotate -f`) — that's a root-only
+      action regardless of group membership, same as every other write
+      operation this project performs, and is exactly what the pre-flight
+      permission check (Q4 below) is checking for. This needs `sudo`, not
+      `wheel` membership — no new group/permission machinery at all.
+- [ ] **Not independently verified for every tool** — this was checked
+      against Ollama's live log files specifically, on both boxes. All
+      tools share the same `installLogRotate()`-generated config and the
+      same `create 644 _llmserver wheel` line (Exo's stanza aside, which
+      uses `wheel`/`staff` for a different reason — see above), so this
+      almost certainly generalizes, but wasn't independently confirmed for
+      Rapid-MLX/mlx-lm/Infinity/Exo/macmon's live files. Worth a quick
+      spot-check of one more tool before fully closing this out, but not
+      worth blocking the plan on — the mechanism generating these files'
+      permissions is identical across tools.
+- [ ] **The literal `wheel`+`774`+toggle ask is no longer needed as
+      designed**, per the evidence above — but if a *future* need for
+      broader operator access shows up (e.g. wanting to delete/rotate
+      logs manually without `sudo`, which 644-world-readable doesn't
+      grant), the toggle design above is still sound and can be revisited
+      then. Not building it now against a problem that turned out to
+      already be solved.
 
 **4. Install location + a menu option to install/update it.**
 
@@ -312,17 +314,14 @@ renaming/aliasing the moment a second debugging function shows up.
       `tar.gz`, print the path, exit 0/non-zero for success/failure (and
       only that — no interactive prompts, so it works cleanly over a bare
       `ssh host headless-macs-debug logs`).
-- [ ] `headless-macs-debug debug-access enable|disable` (naming TBD) —
-      the wheel/permission toggle from Q2 & 3 above.
+- [ ] No `debug-access enable|disable` subcommand — dropped, per the
+      finding above that there's no read-access gap to toggle.
 - [ ] **Permission check before doing anything**, per the user's
-      explicit requirement: `headless-macs-debug` must confirm the
-      invoking user actually has the access it needs (root, or a
-      `wheel`-member during an active debug-access window — exact check
-      depends on which command; `logs` needs enough privilege to run
-      `logrotate` and read every tool's log dir, `debug-access` needs
-      root to modify group membership and permissions) *before* attempting
-      any action, and fail fast with a clear message if not — not attempt
-      partial work and fail confusingly partway through.
+      explicit requirement: `headless-macs-debug logs` must confirm the
+      invoking user can actually run `logrotate` (root, or `sudo`) before
+      attempting anything, and fail fast with a clear message if not —
+      not attempt partial work and fail confusingly partway through. A
+      single, simple check now that the toggle is out of scope.
 - [ ] New `internal/ops/debugtools.go` — `RunDebugTools(cfg *config.Config)`
       — writes the script content (a Go string constant, same pattern as
       this project's plist-content constants) to
@@ -367,12 +366,13 @@ key, which it likely doesn't since group membership is a one-time
 
 **Answered:**
 
-1. ~~Phase 11F group/permission model~~ — **resolved**: toggle-based
-   `wheel` membership + permission loosening, scoped to an explicit
-   enable/disable debug-access window, building on the `wheel` group the
-   logrotate framework already uses rather than introducing a new one.
-   Exact "more permissive" target mode still needs the live-box commands
-   below run first.
+1. ~~Phase 11F group/permission model~~ — **resolved, and simpler than
+   expected**: confirmed on both boxes that live (not just rotated) log
+   files are already `_llmserver:wheel 644` — world-readable. No
+   read-access gap exists to toggle. Dropped the debug-access
+   enable/disable design entirely; the only privilege
+   `headless-macs-debug logs` actually needs is root/`sudo` to run
+   `logrotate` itself, checked once up front (see Phase 11F's revised Q4).
 2. ~~Version number~~ — **resolved: `v2.3.0`**, one combined release
    (Phases 11A–11E's fixes ship alongside 11F's new feature), matching
    the `v2.2.0` precedent of Phases 7–10 shipping together.
@@ -387,64 +387,29 @@ key, which it likely doesn't since group membership is a one-time
    the three, or "cancel" if an even more conservative default is
    preferred — not "stop and uninstall," which should require an
    explicit deliberate move to reach).
-5. ~~Phase 11F script name~~ — **resolved**: `headless-macs-debug`
-   (binary/script name) with a `logs` subcommand (and a `debug-access`
-   or similarly-named subcommand for the wheel/permission toggle) — see
-   Phase 11F's revised Q4 above.
-
 4. ~~Issue #14's plist-path confirmation~~ — **resolved**, see Phase 11B
    above; both doppio-1 and doppio-2 agree.
+5. ~~Phase 11F script name~~ — **resolved**: `headless-macs-debug`
+   (binary/script name) with a `logs` subcommand — no second `debug-access`
+   subcommand, per #1 above.
+8. ~~Exact permission mode for `/var/log/<service>`~~ — **resolved**:
+   confirmed `_llmserver:wheel 644` on live log files, both boxes — no
+   mode change needed at all. Checked against Ollama specifically; all
+   tools share the same `installLogRotate()`-generated config and the
+   same `create 644 _llmserver wheel` line, so this almost certainly
+   generalizes, but wasn't independently spot-checked for the other four
+   tools — low-risk to leave unverified given the shared mechanism, not
+   worth blocking on.
+
+**Still open:**
+
 6. **`headless-macs-debug` implementation form** — shell script (simpler,
    matches "install a script" literally, embeds as a Go string constant
    like this project's plist content) vs. a second small Go binary (more
    consistent with the project's general shell→Go migration, cleaner
    multi-subcommand handling) — see Phase 11F's revised Q4.
-7. **Debug-access auto-expiry** — enforced revert-after-N-minutes (extra
-   complexity: a timer/LaunchDaemon) vs. documented-only, relying on the
-   operator to run `disable` themselves — leaning toward documented-only
-   for v1 unless there's a strong preference otherwise.
-8. **Exact "more permissive" mode** for `/var/log/<service>` during an
-   active debug-access window — **partially resolved, one more data point
-   needed.** Both boxes confirm the *directory* is `_llmserver:_llmserver`
-   mode `755` (`rwxr-xr-x`) — which is already world-readable/traversable
-   as-is, so listing/reading rotated log *files* may not need any
-   permission change at all: the existing `create 644 _llmserver wheel`
-   logrotate line already makes rotated files world-readable (`644`) too.
-   What's still unknown is the mode of the **live, not-yet-rotated**
-   `stdout.log`/`stderr.log` files a daemon currently has open — those
-   aren't touched by the `create` directive (which only applies at
-   rotation time) and may have a tighter mode from whatever umask the
-   daemon itself writes with. That's the actually relevant unknown for
-   deciding whether the debug-access toggle needs to change anything at
-   all, or whether `headless-macs-debug logs` can just force a rotation
-   (making everything world-readable via the existing `create` line) and
-   skip the wheel/permission-toggle machinery entirely for *read* access —
-   possibly narrowing Q2/Q3's toggle to just what's needed for *running*
-   the rotation itself (which needs root, not group membership). One more
-   command below resolves this.
-
----
-
-## One remaining command to run on doppio-1 and doppio-2 (open question #8)
-
-The plist-path commands are done — both boxes agreed, see Phase 11B.
-Only the live-log-file mode is still needed. Read-only.
-
-```bash
-ls -l /var/log/ollama/stdout.log /var/log/ollama/stderr.log
-stat -f '%Su:%Sg %OLp' /var/log/ollama/stdout.log /var/log/ollama/stderr.log
-```
-
-If these come back `644` (or already group/world-readable some other
-way), reading logs needs no permission change at all — the debug-access
-toggle narrows to just what's needed to *run* `logrotate`/`headless-macs-debug`
-itself (root, or an explicit sudo invocation), not an ongoing group
-membership. If they come back tighter (e.g. `640` or `600`, owner-only),
-the toggle is doing real work and the `wheel`-based design stands as
-planned above.
-
-Paste the output back and I'll fill in the remaining unknowns in this
-plan before anything gets implemented.
+7. ~~Debug-access auto-expiry~~ — **moot**, no toggle to expire per #1
+   above.
 
 ---
 

@@ -166,6 +166,19 @@ Each run forces an out-of-cycle rotation using the same shared `logrotate` confi
 
 **The honest tradeoff:** this is real elevated access for one user, even though it's narrowly scoped to one binary. Leave it off by default; enable it deliberately when you actually need non-interactive log pulls over SSH, and turn it back off when you're done — it's not designed to be left on as a standing state.
 
+**Use the full path when scripting it** — a non-interactive `ssh host 'command'` runs a non-login shell, which on macOS typically does *not* source the profile files that put `/usr/local/bin` on `$PATH`. The bare `headless-macs-debug` name won't resolve in that context (confirmed live: it fails before sudo is even involved), and — separately — the sudoers grant only matches the exact literal path in the rule, `/usr/local/bin/headless-macs-debug`, not however a shell happens to resolve a bare name. So automation should always call the full path:
+
+```bash
+ssh user@host 'sudo /usr/local/bin/headless-macs-debug logs ollama'
+```
+
+One command to pull a bundle down in one shot:
+
+```bash
+BUNDLE=$(ssh user@host 'sudo /usr/local/bin/headless-macs-debug logs ollama')
+scp "user@host:$BUNDLE" .
+```
+
 ---
 
 ## Tool Selection

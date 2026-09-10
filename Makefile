@@ -59,7 +59,7 @@ uninstall:
 	@echo "Removed $(INSTALL) and $(DEBUG_INSTALL)"
 
 clean:
-	rm -f $(BINARY) $(DEBUG_BINARY)
+	rm -f $(BINARY) $(DEBUG_BINARY) $(DEBUG_ASSET)
 
 lint:
 	go vet ./...

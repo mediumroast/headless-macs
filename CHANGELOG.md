@@ -9,8 +9,12 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.3.0] — 2026-09-10
+
 Phase 11: fixes for issues #13–#17, plus a new debugging-tools capability.
-Targeted for `v2.3.0` (Minor — 11F adds a new subcommand and config key).
+Live-tested on doppio-1, which surfaced and fixed several additional real
+bugs beyond the original diagnoses — listed below alongside the planned
+fixes.
 
 ### Fixed
 
@@ -34,7 +38,14 @@ Targeted for `v2.3.0` (Minor — 11F adds a new subcommand and config key).
   never verified sshd actually came up** (#15) — extracted Verify's
   real state check into a shared `sshEnabledLive()` helper both
   functions now call, so they can't disagree about the same thing
-  again.
+  again. That shared check itself needed a second fix once live-tested:
+  it originally parsed `launchctl print`'s `state` field, but
+  `com.openssh.sshd` is inetd-compatible/socket-activated, so its
+  top-level state legitimately reads `not running` while idle — there's
+  no `launchctl` state string that reliably means "armed and listening"
+  for this service class. Replaced with a live TCP dial to
+  `127.0.0.1:22` that reads back the `SSH-` protocol banner, the same
+  approach every other tool's HTTP endpoint check uses.
 - **`update-tools` had no macmon support at all** (#16) — added
   `updateMacmon()`, matching the existing per-tool update pattern.
 - **Precheck/Verify: scroll bounds computed from raw check count, not
@@ -42,7 +53,39 @@ Targeted for `v2.3.0` (Minor — 11F adds a new subcommand and config key).
   `checkCount()` but used as an index into `renderChecks()`'s output,
   which has more entries (section headers, blank separators, detail
   rows). Cached the rendered rows and bound scroll against their real
-  length instead.
+  length instead. Live testing found this fix incomplete: the identical
+  bug existed in a second, near-duplicate screen implementation
+  (`run_screen.go`, used by Baseline/Storage/Tools/Restore/Update/Debug
+  Tools) that #17's original fix never touched, fixed the same way. The
+  actual root cause of the reported "title bar disappears" symptom
+  turned out to be a separate, genuine `lipgloss` bug: `Style.Render()`
+  with `Background()` set, given a string with an embedded trailing
+  `\n`, pads a synthetic second line with spaces and no closing newline
+  of its own, merging the scroll indicator into whatever got written
+  next — reproduced directly against this repo's `lipgloss` dependency
+  before fixing, by moving the `\n` outside the styled `Render()` call.
+- **`archive/tar: write too long` bundling an actively-growing log
+  file** — `headless-macs-debug logs` built tar headers from a stale
+  `os.FileInfo` taken before the file could grow further (hit live
+  bundling Ollama's actively-growing `stderr.log`). Fixed by re-statting
+  the already-open file and capping the copy with `io.CopyN`.
+- **`headless-macs-debug` invoked by bare name fails over
+  non-interactive SSH** — `ssh host 'cmd'` runs a non-login shell, which
+  typically excludes `/usr/local/bin` from `$PATH`. Documented the
+  full-path invocation for scripted/automated use.
+- **`make install` only installed one of the two binaries this project
+  builds** — now installs both `headless-macs` and `headless-macs-debug`.
+
+### Changed
+
+- **`internal/ops/assets/headless-macs-debug` is no longer committed to
+  git** — it was tracked as a real binary so a fresh clone's
+  `go build ./...` would work, but a Go build isn't byte-reproducible
+  across machines/toolchains even from identical source, so every local
+  `make build` permanently diverged from the committed copy and broke
+  `git pull`. `make debug-binary`/`make build` regenerate it fresh
+  instead; a bare `go build ./...` now needs one of those run once
+  after cloning first.
 
 ### Added
 
@@ -60,6 +103,17 @@ Targeted for `v2.3.0` (Minor — 11F adds a new subcommand and config key).
   anything is written; the sudoers drop-in is validated with
   `visudo -c` before installing. Documented in `README.md` as an
   explicit escalation/de-escalation path.
+- **`tea.WithMouseCellMotion()`** — `tea.WithAltScreen()` alone doesn't
+  stop a terminal from doing its own native viewport scroll on a
+  trackpad/scroll-wheel gesture (a real, separate bubbletea gotcha found
+  investigating the scroll-indicator symptom above; not itself the fix
+  for that symptom, but worth keeping).
+- **`make uninstall`** — removes both installed binaries; `make clean`
+  now also covers the (no longer committed) debug-binary embed asset.
+
+### PR
+
+[#18](https://github.com/mediumroast/headless-macs/pull/18)
 
 ---
 
@@ -415,7 +469,7 @@ Addresses peer-review feedback from Jeff (homelab operator running the same stac
 
 ### PR
 
-[#3 Phase 5: Security hardening and operational improvements](https://github.com/miha42-github/headless-macs/pull/3)
+[#3 Phase 5: Security hardening and operational improvements](https://github.com/mediumroast/headless-macs/pull/3)
 
 ---
 
@@ -441,7 +495,7 @@ Phase 4: Modelfile system, KV cache sizing model, and client tooling documentati
 
 ### PR
 
-[#2 Phase 4: Modelfile system, KV cache model, Zoo Code](https://github.com/miha42-github/headless-macs/pull/2)
+[#2 Phase 4: Modelfile system, KV cache model, Zoo Code](https://github.com/mediumroast/headless-macs/pull/2)
 
 ---
 
@@ -475,7 +529,7 @@ Phase 2: Complete production rewrite. First release intended for real headless i
 
 ### PR
 
-[#1 Phase 2: Production headless inference server setup](https://github.com/miha42-github/headless-macs/pull/1)
+[#1 Phase 2: Production headless inference server setup](https://github.com/mediumroast/headless-macs/pull/1)
 
 ---
 
@@ -505,14 +559,15 @@ Initial release: single-script pmset + Ollama LaunchDaemon setup.
 
 ---
 
-[Unreleased]: https://github.com/miha42-github/headless-macs/compare/v2.2.1...HEAD
-[2.2.1]: https://github.com/miha42-github/headless-macs/compare/v2.2.0...v2.2.1
-[2.2.0]: https://github.com/miha42-github/headless-macs/compare/v2.1.1...v2.2.0
-[2.1.1]: https://github.com/miha42-github/headless-macs/compare/v2.1.0...v2.1.1
-[2.1.0]: https://github.com/miha42-github/headless-macs/compare/v2.0.0...v2.1.0
-[2.0.0]: https://github.com/miha42-github/headless-macs/compare/v1.2.0...v2.0.0
-[1.2.0]: https://github.com/miha42-github/headless-macs/compare/v1.1.0...v1.2.0
-[1.1.0]: https://github.com/miha42-github/headless-macs/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/miha42-github/headless-macs/compare/v0.2.0...v1.0.0
-[0.2.0]: https://github.com/miha42-github/headless-macs/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/miha42-github/headless-macs/releases/tag/v0.1.0
+[Unreleased]: https://github.com/mediumroast/headless-macs/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/mediumroast/headless-macs/compare/v2.2.1...v2.3.0
+[2.2.1]: https://github.com/mediumroast/headless-macs/compare/v2.2.0...v2.2.1
+[2.2.0]: https://github.com/mediumroast/headless-macs/compare/v2.1.1...v2.2.0
+[2.1.1]: https://github.com/mediumroast/headless-macs/compare/v2.1.0...v2.1.1
+[2.1.0]: https://github.com/mediumroast/headless-macs/compare/v2.0.0...v2.1.0
+[2.0.0]: https://github.com/mediumroast/headless-macs/compare/v1.2.0...v2.0.0
+[1.2.0]: https://github.com/mediumroast/headless-macs/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/mediumroast/headless-macs/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/mediumroast/headless-macs/compare/v0.2.0...v1.0.0
+[0.2.0]: https://github.com/mediumroast/headless-macs/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/mediumroast/headless-macs/releases/tag/v0.1.0

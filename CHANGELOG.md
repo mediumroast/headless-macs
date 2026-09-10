@@ -9,7 +9,57 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-_No changes yet._
+Phase 11: fixes for issues #13–#17, plus a new debugging-tools capability.
+Targeted for `v2.3.0` (Minor — 11F adds a new subcommand and config key).
+
+### Fixed
+
+- **Config editor: tool enable/disable toggle didn't persist; config
+  file never gained new sections; no teardown when disabling a tool**
+  (#13) — `config.Load()` now auto-migrates a config file predating a
+  schema addition (e.g. missing the macmon/tui sections), patching and
+  saving it back immediately instead of waiting for an unrelated future
+  save. The editor's save handler now verifies the write by re-reading
+  the file, surfacing `[save failed: ...]` instead of silently claiming
+  `[saved]`. New confirmation screen when a tool's `enabled` flag
+  transitions `true` → `false`: stop and uninstall now (new
+  `internal/ops/disable.go`, leaving model/data directories untouched),
+  save config only (default), or cancel.
+- **Baseline: three Phase 8 service suppressions (coreaudiod, audiomxd,
+  AirPlayXPCHelper) never stopped the running process** (#14) — those
+  three had an empty `Plist` field in `phase8Suppressions`, which
+  skipped the `bootout` call every other entry gets. Real plist paths
+  confirmed live on doppio-1 and doppio-2, not guessed.
+- **Baseline: SSH section reported success from subprocess exit codes,
+  never verified sshd actually came up** (#15) — extracted Verify's
+  real state check into a shared `sshEnabledLive()` helper both
+  functions now call, so they can't disagree about the same thing
+  again.
+- **`update-tools` had no macmon support at all** (#16) — added
+  `updateMacmon()`, matching the existing per-tool update pattern.
+- **Precheck/Verify: scroll bounds computed from raw check count, not
+  rendered row count** (#17) — `m.scroll` was bounded against
+  `checkCount()` but used as an index into `renderChecks()`'s output,
+  which has more entries (section headers, blank separators, detail
+  rows). Cached the rendered rows and bound scroll against their real
+  length instead.
+
+### Added
+
+- **`headless-macs-debug`** — a small, separate binary for pulling logs
+  off a node without the full TUI. `logs [tool]` forces an out-of-cycle
+  rotation (reusing the existing shared logrotate config) and bundles
+  the result into a timestamped `tar.gz`, ready to `scp` off the box.
+  Distributed via `go:embed` inside the main binary rather than a
+  second file to remember to copy.
+- **`debug.sudo_nopasswd_enabled`** config key and `headless-macs
+  debug-tools` / `x` (Debugging Tools) — a narrowly-scoped, toggleable
+  `NOPASSWD` sudo grant for exactly `headless-macs-debug`, so it can
+  run non-interactively over SSH. Target username is prompted
+  interactively (never stored in config) and validated to exist before
+  anything is written; the sudoers drop-in is validated with
+  `visudo -c` before installing. Documented in `README.md` as an
+  explicit escalation/de-escalation path.
 
 ---
 

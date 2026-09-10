@@ -1,8 +1,12 @@
 # PHASE 11 PLAN — Bug fixes (Issues #13–#17) + Debugging Log Tools
 
-**⚠️ DO NOT EXECUTE. This plan needs sign-off before any code changes.**
-Nothing in this document has been implemented. Branch `claude/phase-11-issue-fixes`
-has been created off `main` and contains only this plan document so far.
+**✅ IMPLEMENTED.** All six phases (11A–11F) are committed on
+`claude/phase-11-issue-fixes`. `go build ./...`, `go vet ./...`,
+`go test ./...`, and `make build` (full go:embed chain) are all clean.
+Issues #13–#17 are closed with fix-summary comments. Not yet merged to
+main — see the closeout section below for what's still pending: live
+verification on doppio-1/doppio-2 (called out per-item in each phase
+below) and the PR description update once that's done.
 
 ---
 
@@ -45,7 +49,7 @@ never having successfully run. Separately confirmed: `RunTools()` has no
 teardown path for a tool transitioning enabled→disabled, and `RunRestore()`
 only supports removing everything, not one tool.
 
-- [ ] **Auto-migrate on load, independent of root-causing the save bug.**
+- [x] **Auto-migrate on load, independent of root-causing the save bug.**
       `config.Load()` (`internal/config/config.go`) should detect when the
       loaded file is missing sections/keys present in the current `Config`
       struct (compare against a freshly-`Bootstrap`'d template, or simpler:
@@ -54,14 +58,14 @@ only supports removing everything, not one tool.
       patched version back to disk. This directly fixes symptom #2
       (macmon section never appearing) regardless of whether #1's root
       cause is ever fully pinned down.
-- [ ] **Add a post-save verification step** in `config_editor.go`'s `s`/`S`
+- [x] **Add a post-save verification step** in `config_editor.go`'s `s`/`S`
       handler: after `config.Save(m.cfg)`, re-read the file and compare
       against what was just written; if they don't match, surface a
       `[FAIL]`-equivalent error state in the UI instead of silently
       reporting `[saved]`. This won't fix an unknown root cause, but it
       stops the editor from *lying* about save state, which is the
       sharper edge of the original complaint.
-- [ ] **Tool-disable confirmation screen**, reusing the existing
+- [x] **Tool-disable confirmation screen**, reusing the existing
       `restore_confirm.go` pattern: when Save detects an `enabled` flag
       transitioned `true` → `false` (diff working copy against
       `origJSON`, which the model already tracks), route through a
@@ -73,7 +77,7 @@ only supports removing everything, not one tool.
       3. Cancel — leave `enabled` as `true`
       Default/pre-selected option should be (2), the least destructive,
       not (1).
-- [ ] New `internal/ops` function for per-tool teardown (name TBD —
+- [x] New `internal/ops` function for per-tool teardown (name TBD —
       `RunDisableTool(cfg *config.Config, tool string)`?), factored out of
       `RunRestore()`'s existing per-tool bootout logic rather than
       duplicated, so the suppress/restore/disable-one-tool paths share one
@@ -106,7 +110,7 @@ of seven `phase8Suppressions` entries have `Plist: ""`, which skips the
       com.apple.audiomxd          → /System/Library/LaunchDaemons/com.apple.audiomxd.plist
       com.apple.AirPlayXPCHelper  → /System/Library/LaunchDaemons/com.apple.AirPlayXPCHelper.plist
       ```
-- [ ] Fill in `Plist` for these three entries in `phase8Suppressions`
+- [x] Fill in `Plist` for these three entries in `phase8Suppressions`
       (`internal/ops/baseline.go`) with the paths above — the existing
       `bootout` call in the suppression loop then covers them with no
       other code change needed; this is now a one-line-per-service fix.
@@ -132,17 +136,17 @@ alone; the `systemsetup` fallback discards its own exit code entirely.
 `verify.go` does the real check (`launchctl print` parsed for
 `state = running`/`waiting`) and correctly disagrees.
 
-- [ ] Extract `verify.go`'s SSH-state check (`launchctl print
+- [x] Extract `verify.go`'s SSH-state check (`launchctl print
       system/com.openssh.sshd`, parsed for `state = running`/`waiting`)
       into a shared helper both `baseline.go` and `verify.go` call —
       single source of truth, can't drift apart again.
-- [ ] `sectionSSH()` calls the shared check *after* attempting
+- [x] `sectionSSH()` calls the shared check *after* attempting
       `enable`+`kickstart` (and after the `systemsetup` fallback, if that
       path is taken) and reports `[SET]` only if the check confirms
       success; otherwise `[WARN]` with the same fix hint `verify.go`
       already prints, so the two commands never again tell the operator
       different stories about the same thing.
-- [ ] Stop discarding the `systemsetup -setremotelogin on` fallback's
+- [x] Stop discarding the `systemsetup -setremotelogin on` fallback's
       exit code — `CLAUDE.md` already documents this path as broken on
       macOS 26 Tahoe; if the check above still applies afterward, the
       discarded exit code stops mattering functionally, but silently
@@ -160,7 +164,7 @@ alone; the `systemsetup` fallback discards its own exit code entirely.
 `installMacmon()` also never upgrades an existing install, only installs
 if absent.
 
-- [ ] Add `updateMacmon()` to `internal/ops/update.go`, following the
+- [x] Add `updateMacmon()` to `internal/ops/update.go`, following the
       existing per-tool pattern (stop daemon → `brew upgrade macmon` →
       re-bootstrap → confirm via the same endpoint check `installMacmon()`
       already uses). Needs a way to detect "is a newer version available"
@@ -168,9 +172,9 @@ if absent.
       `brew upgrade macmon` and let Homebrew no-op if already current —
       simpler, matches how the other tools' update functions already
       behave by re-running their installer unconditionally).
-- [ ] Add the `if cfg.Tools.Macmon.Enabled { r.updateMacmon() }` branch to
+- [x] Add the `if cfg.Tools.Macmon.Enabled { r.updateMacmon() }` branch to
       `RunUpdateTools()` alongside the existing five.
-- [ ] `docs/tool-comparison.md`'s macmon section already tells operators
+- [x] `docs/tool-comparison.md`'s macmon section already tells operators
       to `brew upgrade macmon && re-run install-tools` for the `--host`
       flag limitation — once this lands, that instruction becomes
       literally accurate via `update-tools` too; consider updating the
@@ -192,12 +196,12 @@ unreachable on short terminals. The reported visual symptom (title bar
 disappearing while scrolling) is **not** confirmed to be caused by this —
 flagged in the issue as needing live reproduction.
 
-- [ ] Cache `renderChecks()`'s output on the model (`cachedRows []string`)
+- [x] Cache `renderChecks()`'s output on the model (`cachedRows []string`)
       whenever `m.result`/`m.verifyResult` changes, rather than
       recomputing it ad hoc — this also avoids the current design's
       implicit assumption that `renderChecks()` is cheap/stable to call
       repeatedly per frame.
-- [ ] Bound `m.scroll` (in all four key handlers — `up`/`down`/`pgup`/`pgdn`)
+- [x] Bound `m.scroll` (in all four key handlers — `up`/`down`/`pgup`/`pgdn`)
       and the `"↑ N more above"` count against `len(m.cachedRows)`, not
       `m.checkCount()`.
 - [ ] **After the fix, verify live** (real terminal, real SSH session —
@@ -348,25 +352,25 @@ This needs `Makefile` changes to build `cmd/headless-macs-debug` *before*
 `cmd/headless-macs` (embed source must exist at build time) — a real,
 non-trivial build-ordering change worth flagging, not a one-line addition.
 
-- [ ] `headless-macs-debug logs` — the rotate+bundle capability from Q1,
+- [x] `headless-macs-debug logs` — the rotate+bundle capability from Q1,
       runnable with no other flags for the "just rotate everything and
       tell me if it worked" default the user asked for: rotate via the
       existing shared logrotate config, bundle into the timestamped
       `tar.gz`, print the path, exit 0/non-zero for success/failure (and
       only that — no interactive prompts, so it works cleanly over a bare
       `ssh host headless-macs-debug logs`).
-- [ ] **Permission check before doing anything**: confirm the invoking
+- [x] **Permission check before doing anything**: confirm the invoking
       user can actually run `logrotate` as root — either already root, or
       covered by the `NOPASSWD` grant below — before attempting anything,
       and fail fast with a clear message (naming the `debug-tools`
       command to enable escalation) if not.
-- [ ] New `internal/ops/debugtools.go` — `RunDebugTools(cfg *config.Config)`
+- [x] New `internal/ops/debugtools.go` — `RunDebugTools(cfg *config.Config)`
       — installs/updates the embedded `headless-macs-debug` binary
       (`[SET]`/`[SKIP]` by content comparison, same idempotency pattern as
       `installLaunchDaemon`), **and** syncs the `NOPASSWD` sudoers grant to
       match a config-driven toggle (see below) — one function covering
       both halves of "Install/Update Debugging Tools."
-- [ ] **`NOPASSWD` toggle, config-driven** (recommended design — matches
+- [x] **`NOPASSWD` toggle, config-driven** (recommended design — matches
       this project's existing "config declares intent, an apply step
       realizes it" model, e.g. `tools.X.enabled`, rather than inventing a
       new interaction pattern): a new `debug.sudo_nopasswd_enabled` (name
@@ -385,7 +389,7 @@ non-trivial build-ordering change worth flagging, not a one-line addition.
       or `dscl . -read /Users/<username>`) before the sudoers drop-in is
       written; refuses clearly, writes nothing, if the user doesn't
       exist. `disable` needs no username — it just removes the drop-in.
-- [ ] **`README.md` documentation of the escalation/de-escalation path**
+- [x] **`README.md` documentation of the escalation/de-escalation path**
       (explicit user requirement) — a new section (near the existing
       "Security scope" callout, matching its tone) explaining: exactly
       what `NOPASSWD` access is granted and to which single command, why
@@ -394,13 +398,13 @@ non-trivial build-ordering change worth flagging, not a one-line addition.
       it, and the honest tradeoff (narrowly scoped to one exact binary
       path, not blanket root access — but still real elevated access,
       enable it deliberately, not by default).
-- [ ] New CLI subcommand `headless-macs debug-tools` (installs/updates
+- [x] New CLI subcommand `headless-macs debug-tools` (installs/updates
       `headless-macs-debug` and syncs the sudoers grant to the config
       toggle's current state — one command covers both, since the
       config edit already happened in Edit Config), alongside the
       existing `precheck`/`baseline`/`install-tools`/etc. in
       `cmd/headless-macs/main.go`.
-- [ ] New TUI sidebar entry — user's suggested framing "Install/Update
+- [x] New TUI sidebar entry — user's suggested framing "Install/Update
       Debugging Tools" (exact label TBD, needs to fit the sidebar's width
       budget — see `internal/tui/menu.go`'s existing items for the
       established naming length/style) — `internal/tui/menu.go`
@@ -533,7 +537,7 @@ a new `docs/debugging-guide.md` (usage docs).
 
 ## Implementation & closeout process
 
-- [ ] **Close each issue as its phase lands**, not all at once at the end
+- [x] **Close each issue as its phase lands**, not all at once at the end
       — as soon as a phase's fix is implemented and verified, close its
       GitHub issue with a comment summarizing what actually changed
       (file/line references, not just "fixed"), matching the level of

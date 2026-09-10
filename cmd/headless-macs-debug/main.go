@@ -176,14 +176,6 @@ func bundleDirs(dest string, dirs []string) error {
 			if err != nil {
 				return nil
 			}
-			hdr, err := tar.FileInfoHeader(fi, "")
-			if err != nil {
-				return nil
-			}
-			hdr.Name = rel
-			if err := tw.WriteHeader(hdr); err != nil {
-				return err
-			}
 			src, err := os.Open(path)
 			if err != nil {
 				// A log a daemon has open for writing may still be
@@ -192,8 +184,46 @@ func bundleDirs(dest string, dirs []string) error {
 				return nil
 			}
 			defer src.Close()
-			_, err = io.Copy(tw, src)
-			return err
+
+			// Re-stat the *opened* file rather than trusting fi from
+			// Walk — for a live log a daemon is still actively
+			// appending to, the file can grow between Walk's stat and
+			// this point. tar requires the header's declared size to
+			// exactly match what's written; a stale, smaller size here
+			// causes "archive/tar: write too long" once io.Copy writes
+			// more bytes than that (found live, bundling Ollama's
+			// actively-growing stderr.log on doppio-1).
+			liveInfo, err := src.Stat()
+			if err != nil {
+				return nil
+			}
+			hdr, err := tar.FileInfoHeader(liveInfo, "")
+			if err != nil {
+				return nil
+			}
+			hdr.Name = rel
+			if err := tw.WriteHeader(hdr); err != nil {
+				return err
+			}
+			// CopyN, not Copy: caps the write at exactly the declared
+			// size even if the file keeps growing during the copy
+			// itself, closing the remaining race window rather than
+			// just narrowing it.
+			n, err := io.CopyN(tw, src, liveInfo.Size())
+			if err != nil && err != io.EOF {
+				return err
+			}
+			// The rarer opposite race: the file shrank (e.g. rotated)
+			// between the Stat above and here, so fewer bytes were
+			// available than declared. Pad explicitly to match the
+			// header's declared size exactly, rather than assuming
+			// tar.Writer handles a short entry gracefully on its own.
+			if pad := liveInfo.Size() - n; pad > 0 {
+				if _, err := tw.Write(make([]byte, pad)); err != nil {
+					return err
+				}
+			}
+			return nil
 		})
 		if err != nil {
 			return err

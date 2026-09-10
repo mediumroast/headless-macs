@@ -207,7 +207,7 @@ Not a serving/inference backend like the five tools above — [`macmon`](https:/
 - Zero cost when disabled — `tools.macmon.enabled` defaults to `false`
 
 **Known limitation**
-- The Homebrew-installed `macmon` build has not consistently shipped a `--host`/`--bind` flag on `serve`. `headless-macs` detects this at install time: if the flag is present, `network.localhost_only` is honored exactly like every other tool; if it isn't, macmon binds all interfaces regardless of that setting, and both `install-tools` and `verify` surface a `[WARN]` explaining why. Upgrading macmon (`brew upgrade macmon`) and re-running `install-tools` picks up `--host` support automatically once a version ships it.
+- The Homebrew-installed `macmon` build has not consistently shipped a `--host`/`--bind` flag on `serve`. `headless-macs` detects this at install time: if the flag is present, `network.localhost_only` is honored exactly like every other tool; if it isn't, macmon binds all interfaces regardless of that setting, and both `install-tools` and `verify` surface a `[WARN]` explaining why. Run `sudo headless-macs update-tools` to upgrade macmon (and re-check for `--host` support) in place — `install-tools` alone only installs macmon if it's absent, it doesn't upgrade an existing one.
 - No authentication or TLS, same as every other tool this project installs — deferred pending broader security work (see `FUTURES.md`).
 
 **Requirements:** none beyond what `install-tools` handles — Homebrew install, `/var/log/macmon/` log directory, and the daemon itself are all automatic once `tools.macmon.enabled` is `true`.

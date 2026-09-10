@@ -107,6 +107,12 @@ func RunUpdateTools(cfg *config.Config) (*UpdateResult, error) {
 		r.add("EXO", ActionSkip, "Exo not enabled in config", "")
 	}
 
+	if cfg.Tools.Macmon.Enabled {
+		r.updateMacmon(cfg)
+	} else {
+		r.add("MACMON", ActionSkip, "macmon not enabled in config", "")
+	}
+
 	ilog.Info(fmt.Sprintf("Log written to: %s", logPath))
 	return r, nil
 }
@@ -334,6 +340,59 @@ func (r *UpdateResult) updateExo() {
 		}
 	} else {
 		r.add(sec, ActionWarn, "Exo plist not found — run Install Tools first", plist)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// macmon
+// ---------------------------------------------------------------------------
+
+// updateMacmon upgrades the macmon hardware-telemetry binary via Homebrew
+// and re-bootstraps its daemon. Previously entirely missing — RunUpdateTools
+// had no branch for macmon at all, and installMacmon() (tools.go) only
+// installs when absent, never upgrades an existing install, so following
+// installMacmon's own advice ("brew upgrade macmon") had no command that
+// actually did it. See issue #16.
+func (r *UpdateResult) updateMacmon(cfg *config.Config) {
+	sec := "MACMON"
+	plist := "/Library/LaunchDaemons/com.llm-server.macmon.plist"
+
+	if _, err := os.Stat(plist); err != nil {
+		r.add(sec, ActionWarn, "Plist not found — run Install Tools first", plist)
+		return
+	}
+
+	_ = exec.Command("launchctl", "bootout", "system", plist).Run()
+	time.Sleep(time.Second)
+	r.add(sec, ActionSet, "Daemon stopped", "")
+
+	r.add(sec, ActionInfo, "Updating macmon via Homebrew…", "")
+	if exec.Command("brew", "upgrade", "macmon").Run() == nil {
+		r.add(sec, ActionSet, "macmon updated via Homebrew", "")
+	} else {
+		r.add(sec, ActionWarn, "Could not update macmon — already at latest or install failed", "")
+	}
+
+	if exec.Command("launchctl", "bootstrap", "system", plist).Run() == nil {
+		r.add(sec, ActionSet, "com.llm-server.macmon re-bootstrapped", "")
+	} else {
+		r.add(sec, ActionWarn, "Could not re-bootstrap com.llm-server.macmon", "")
+		return
+	}
+
+	time.Sleep(2 * time.Second)
+	port := fmt.Sprintf("%d", cfg.Tools.Macmon.Port)
+	if cfg.Tools.Macmon.Port == 0 {
+		port = "9090"
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%s/json", port))
+	if err == nil {
+		resp.Body.Close()
+		r.add(sec, ActionSet, "macmon API responding", "")
+	} else {
+		r.add(sec, ActionWarn, "macmon API not yet responding — may still be starting",
+			"Check: sudo launchctl print system/com.llm-server.macmon")
 	}
 }
 

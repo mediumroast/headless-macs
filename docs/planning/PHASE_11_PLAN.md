@@ -17,10 +17,11 @@ All five are independently-diagnosed, already-filed bugs
 diagnosis happens in this plan, only fix design. They're bundled into one
 phase/branch because they're small, don't touch each other's code, and
 none individually justifies its own branch/PR/release cycle. Per
-`docs/RELEASE_STRATEGY.md`'s versioning rules, this phase is a **Patch**
-release (bug fixes only) — except Phase 11F (new logging capability),
-which is **Minor** (new subcommand, new config surface). The whole phase
-will ship as one version; see Open Questions for which number.
+`docs/RELEASE_STRATEGY.md`'s versioning rules, Phases 11A–11E are
+individually **Patch**-level (bug fixes only) and 11F is **Minor** (new
+subcommand). Per user decision, the whole phase ships together as one
+**`v2.3.0`** release — the Minor bump from 11F's new feature governs the
+combined version, same as how `v2.2.0` absorbed Phases 7–10 together.
 
 ---
 
@@ -244,51 +245,113 @@ that:
   the rest of this project already has.
 
 **2 & 3. A non-root operator user added to a group, `/var/log/<service>`
-at `774` so that group can act on the logs.**
-**Recommend against the literal ask, propose an alternative, and leave
-the final call to the user:**
-- `wheel` is macOS's traditional superuser-adjacent group (historically
-  tied to `su`-to-root on BSD-derived systems). Adding an operator to it
-  grants broad group membership with implications well beyond log access,
-  and doesn't fit this project's existing pattern of a narrowly-scoped
-  service account (`_llmserver`) for exactly this kind of purpose.
-- Every managed log directory (`/var/log/ollama`, `/var/log/exo`, etc.) is
-  **already** owned `_llmserver:_llmserver` (confirmed in
-  `internal/ops/tools.go` — every tool's install function does
-  `chown _llmserver:_llmserver` on its log dir). Adding the operator's
-  user to the **existing** `_llmserver` group, and changing the mode from
-  `0755` to `0750` (owner rwx, group rx, no world access — logs may
-  contain prompts/model output, not just operational chatter) accomplishes
-  the same goal (group members can read/act on logs) without introducing
-  a second, broader-scoped group or exposing logs world-readable (`774`
-  would still leave "other" with read access).
-- If group-*write* access (not just read) is actually needed (e.g. an
-  operator needs to delete/rotate manually, not just read), `0770` is the
-  next step up from `0750` — still short of world-readable `774`.
-- **This needs the user's explicit decision before implementation**:
-  `_llmserver` + `0750`/`0770` (recommended), or the literal `wheel` +
-  `0774` ask, or something else.
+made group-actionable so that group can work with the logs.**
+
+**Correction to the original recommendation in this plan** — checked
+against the actual logrotate config generated in
+`internal/ops/tools.go` (`installLogRotate()`, Phase 7) rather than only
+against directory-level `chown` calls as the first draft did: the
+`create 644 _llmserver wheel` line already governs the *files* logrotate
+produces on Ollama/Rapid-MLX/mlx-lm/Infinity's rotated logs — `wheel` is
+already the coordination group `root` (which runs logrotate) and
+`_llmserver` (which owns the live daemons) meet on today, specifically
+because root needs to create/touch files during rotation that an
+`_llmserver`-run daemon can keep writing to afterward. Exo's stanza uses
+`wheel` or `staff` depending on how it's installed, for the same
+root/non-`_llmserver`-owner reason. So `wheel` isn't a foreign concept
+being introduced here — it's already load-bearing in the rotation
+framework, and directory-level ownership (`_llmserver:_llmserver`, set
+at daemon-install time) is a separate, narrower thing from the
+rotated-file group logrotate itself assigns.
+
+**User's proposed design, adopted:** rather than a standing permission
+change, an explicit **debug-mode toggle** — enabling it adds the
+operator's user to `wheel` and loosens `/var/log/<service>` permissions;
+disabling it removes the user from `wheel` and restores the tighter
+mode. This is a materially better answer than either the original literal
+ask (permanent `774` + standing `wheel` membership) or this plan's first
+recommendation (a second group) — it keeps the existing, already-stable
+rotation/ownership framework completely untouched (addressing the user's
+stated concern directly: no rework of something that already works), and
+confines the broader `wheel` membership to a short, explicit, reversible
+window instead of a permanent state.
+
+- [ ] `headless-macs debug` (or a subcommand of it) gets an
+      enable/disable toggle for "debug access": `enable` adds the
+      current/specified operator user to `wheel` and sets
+      `/var/log/<service>` directories to a more permissive mode (exact
+      mode TBD — e.g. `0750`→`0770`, keeping `_llmserver` as owner but
+      granting the (now-`wheel`-member) operator group-level access
+      however group membership resolves that; needs the real current mode
+      confirmed on a live box before picking the "more permissive" target
+      precisely). `disable` reverses both.
+- [ ] Needs a clear default: debug access should almost certainly default
+      **disabled**, and probably auto-expire or at least nag if left
+      enabled (the user's own framing is "short duration to handle
+      debugging," not a standing state) — worth deciding whether this is
+      enforced (a timer that reverts it) or just documented/left to
+      operator discipline. Leaning toward documented-only for v1 (an
+      auto-revert timer is real extra complexity — a new LaunchDaemon or
+      similar — for a feature whose whole point is being simple and
+      short-lived); flagging as a decision point, not deciding here.
+- [ ] Does **not** change the existing `create 644 _llmserver wheel`
+      logrotate stanza at all — that keeps working exactly as it does
+      today regardless of debug-mode state, per the "don't rework what's
+      stable" concern.
 
 **4. Install location + a menu option to install/update it.**
-- Script installed to `/usr/local/bin/headless-macs-debug-logs` (avoids
-  colliding with the main `headless-macs` binary name, matches the
-  existing `/usr/local/bin` convention this project already uses for the
-  main binary itself).
-- New `internal/ops/debugtools.go` — `RunDebugTools(cfg *config.Config)`
-  — writes the script content (a Go string constant, same pattern as this
-  project's plist-content constants), `chmod +x`, reports `[SET]`/`[SKIP]`
-  by content comparison (same idempotency pattern as `installLaunchDaemon`
-  — compare content, not just existence).
-- New CLI subcommand `headless-macs debug-tools`, alongside the existing
-  `precheck`/`baseline`/`install-tools`/etc. in `cmd/headless-macs/main.go`.
-- New TUI sidebar entry — user's suggested label "Install/Update Debugging
-  Tools" (final label TBD, needs to fit the sidebar's width budget — see
-  `internal/tui/menu.go`'s existing items for the established naming
-  length/style) — `internal/tui/menu.go` (`menuItems` list) plus a new
-  screen or reuse of the existing `RunScreen` pattern already used for
-  Baseline/Install Tools/Update Tools/Storage (`internal/tui/run_screen.go`
-  already generically renders any `ops` result's `[SET]`/`[SKIP]`/`[WARN]`
-  actions — this should slot in without a new screen type).
+
+**Revised per user direction:** the standalone tool is named
+`headless-macs-debug` (not `headless-macs-debug-logs`), installed to
+`/usr/local/bin/headless-macs-debug` — room for more subcommands beyond
+logs later, rather than a single-purpose script name that would need
+renaming/aliasing the moment a second debugging function shows up.
+
+- [ ] `headless-macs-debug logs` — the rotate+bundle capability from Q1,
+      runnable with no other flags for the "just rotate everything and
+      tell me if it worked" default the user asked for: rotate via the
+      existing shared logrotate config, bundle into the timestamped
+      `tar.gz`, print the path, exit 0/non-zero for success/failure (and
+      only that — no interactive prompts, so it works cleanly over a bare
+      `ssh host headless-macs-debug logs`).
+- [ ] `headless-macs-debug debug-access enable|disable` (naming TBD) —
+      the wheel/permission toggle from Q2 & 3 above.
+- [ ] **Permission check before doing anything**, per the user's
+      explicit requirement: `headless-macs-debug` must confirm the
+      invoking user actually has the access it needs (root, or a
+      `wheel`-member during an active debug-access window — exact check
+      depends on which command; `logs` needs enough privilege to run
+      `logrotate` and read every tool's log dir, `debug-access` needs
+      root to modify group membership and permissions) *before* attempting
+      any action, and fail fast with a clear message if not — not attempt
+      partial work and fail confusingly partway through.
+- [ ] New `internal/ops/debugtools.go` — `RunDebugTools(cfg *config.Config)`
+      — writes the script content (a Go string constant, same pattern as
+      this project's plist-content constants) to
+      `/usr/local/bin/headless-macs-debug`, `chmod +x`, reports
+      `[SET]`/`[SKIP]` by content comparison (same idempotency pattern as
+      `installLaunchDaemon` — compare content, not just existence).
+      Whether `headless-macs-debug` itself is implemented as a shell
+      script (matches "install a script" from the user's original ask,
+      simplest to embed as a Go string constant) or a second small Go
+      binary (more consistent with this project's general move away from
+      shell, better structured multi-subcommand handling) is worth a
+      explicit decision before implementation — leaning shell script per
+      the literal ask and to avoid a second compiled artifact/build
+      target, but flagging the tradeoff rather than deciding unilaterally.
+- [ ] New CLI subcommand `headless-macs debug-tools` (installs/updates
+      `headless-macs-debug` itself — distinct from `headless-macs-debug`
+      the installed tool), alongside the existing
+      `precheck`/`baseline`/`install-tools`/etc. in `cmd/headless-macs/main.go`.
+- [ ] New TUI sidebar entry — user's suggested framing "Install/Update
+      Debugging Tools" (exact label TBD, needs to fit the sidebar's width
+      budget — see `internal/tui/menu.go`'s existing items for the
+      established naming length/style) — `internal/tui/menu.go`
+      (`menuItems` list) plus a new screen or reuse of the existing
+      `RunScreen` pattern already used for Baseline/Install Tools/Update
+      Tools/Storage (`internal/tui/run_screen.go` already generically
+      renders any `ops` result's `[SET]`/`[SKIP]`/`[WARN]` actions — this
+      should slot in without a new screen type).
 
 **Scope:** New capability — Minor version bump (new subcommand, new
 config surface only if the wheel/`_llmserver` decision needs a config
@@ -302,24 +365,82 @@ key, which it likely doesn't since group membership is a one-time
 
 ---
 
-## Open questions (need answers before implementation starts)
+## Open questions
 
-1. **Phase 11F group/permission model** — `_llmserver` group + `0750`
-   (recommended) vs. the literal `wheel` + `0774` ask vs. something else?
-2. **Version number for this phase** — Phases 11A–11E are patch-level
-   fixes; 11F is a new minor-level capability. Ship as one combined minor
-   release (`v2.3.0`, following the same "shipped together" precedent as
-   `v2.2.0`'s Phases 7–10), or split 11A–11E into a `v2.2.2` patch release
-   first and 11F into its own `v2.3.0` afterward?
-3. **Issue #13's teardown confirmation screen** — confirmed direction
-   (reuse `restore_confirm.go`'s pattern) from the issue's own
-   recommendation, but the exact three options' wording/defaults need a
-   look before implementation.
-4. **Issue #14's plist-path confirmation** — needs access to a live box
-   (doppio-1/2) to confirm real paths before the fix can be written
-   correctly rather than guessed.
-5. **Phase 11F script name and TUI label** — `headless-macs-debug-logs`
-   and "Install/Update Debugging Tools" are placeholders pending approval.
+**Answered:**
+
+1. ~~Phase 11F group/permission model~~ — **resolved**: toggle-based
+   `wheel` membership + permission loosening, scoped to an explicit
+   enable/disable debug-access window, building on the `wheel` group the
+   logrotate framework already uses rather than introducing a new one.
+   Exact "more permissive" target mode still needs the live-box commands
+   below run first.
+2. ~~Version number~~ — **resolved: `v2.3.0`**, one combined release
+   (Phases 11A–11E's fixes ship alongside 11F's new feature), matching
+   the `v2.2.0` precedent of Phases 7–10 shipping together.
+3. ~~Issue #13's teardown confirmation screen — what "wording/defaults"
+   meant~~ — **clarified, not a new question**: two concrete decisions
+   the confirm screen needs before implementation, same shape as
+   `restore_confirm.go`'s existing design: (a) the exact button/option
+   text for the three choices (stop+uninstall / save-only / cancel), and
+   (b) which one is pre-highlighted when the screen opens — `restore_confirm.go`
+   defaults its cursor to the *safer* option, and this screen should too
+   (recommend defaulting to "save config only," the least destructive of
+   the three, or "cancel" if an even more conservative default is
+   preferred — not "stop and uninstall," which should require an
+   explicit deliberate move to reach).
+5. ~~Phase 11F script name~~ — **resolved**: `headless-macs-debug`
+   (binary/script name) with a `logs` subcommand (and a `debug-access`
+   or similarly-named subcommand for the wheel/permission toggle) — see
+   Phase 11F's revised Q4 above.
+
+**Still open:**
+
+4. **Issue #14's plist-path confirmation** — commands to run on
+   doppio-1/doppio-2 are below; needs real output before this fix can be
+   written correctly rather than guessed.
+6. **`headless-macs-debug` implementation form** — shell script (simpler,
+   matches "install a script" literally, embeds as a Go string constant
+   like this project's plist content) vs. a second small Go binary (more
+   consistent with the project's general shell→Go migration, cleaner
+   multi-subcommand handling) — see Phase 11F's revised Q4.
+7. **Debug-access auto-expiry** — enforced revert-after-N-minutes (extra
+   complexity: a timer/LaunchDaemon) vs. documented-only, relying on the
+   operator to run `disable` themselves — leaning toward documented-only
+   for v1 unless there's a strong preference otherwise.
+8. **Exact "more permissive" mode** for `/var/log/<service>` during an
+   active debug-access window — depends on the live-box commands below
+   confirming current real ownership/mode first.
+
+---
+
+## Commands to run on doppio-1 and doppio-2 (for open question #4)
+
+Confirms real plist paths (or lack thereof) for the three Issue #14
+services, and the real current ownership/mode of a representative log
+directory (for open question #8). Read-only — nothing here changes
+system state.
+
+```bash
+# Plist paths (or "Could not find" if none / not a static LaunchDaemon)
+for label in com.apple.audio.coreaudiod com.apple.audiomxd com.apple.AirPlayXPCHelper; do
+  echo "=== $label ==="
+  sudo launchctl print system/$label 2>&1 | grep -E "path = |state = "
+done
+
+# Cross-check against on-disk plists directly, in case launchctl print
+# is unreliable for any of these (e.g. XPC-activated, no static entry)
+sudo find /System/Library/LaunchDaemons /System/Library/LaunchAgents \
+  -iname '*coreaudiod*' -o -iname '*audiomxd*' -o -iname '*AirPlayXPCHelper*'
+
+# Current real ownership/mode of one managed log directory, for the
+# debug-access permission-toggle design (Q2/Q3)
+ls -ld /var/log/ollama
+stat -f '%Su:%Sg %OLp' /var/log/ollama
+```
+
+Paste the output back and I'll fill in the remaining unknowns in this
+plan before anything gets implemented.
 
 ---
 

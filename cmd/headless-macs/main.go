@@ -116,7 +116,17 @@ func runTUI() {
 	}
 
 	app := tui.NewApp(cfg, firstRun)
-	p := tea.NewProgram(app, tea.WithAltScreen())
+	// WithMouseCellMotion is required, not cosmetic: tea.WithAltScreen()
+	// alone does not stop a terminal from doing its own native viewport
+	// scroll on a trackpad/scroll-wheel gesture — confirmed on macOS
+	// Terminal.app in charmbracelet/bubbletea#349. Without mouse capture,
+	// that native scroll shifts the terminal's own viewport independent
+	// of anything this app draws, which is what was making the title bar
+	// scroll out of view on long result lists (Verify, Baseline) while
+	// leaving the footer visible — not a rendering bug in this app's own
+	// frame composition. Capturing mouse events routes scroll gestures to
+	// bubbletea as MouseMsg instead of letting the terminal handle them.
+	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		os.Exit(1)

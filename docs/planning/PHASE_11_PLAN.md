@@ -1,12 +1,18 @@
 # PHASE 11 PLAN — Bug fixes (Issues #13–#17) + Debugging Log Tools
 
-**✅ IMPLEMENTED.** All six phases (11A–11F) are committed on
-`claude/phase-11-issue-fixes`. `go build ./...`, `go vet ./...`,
-`go test ./...`, and `make build` (full go:embed chain) are all clean.
-Issues #13–#17 are closed with fix-summary comments. Not yet merged to
-main — see the closeout section below for what's still pending: live
-verification on doppio-1/doppio-2 (called out per-item in each phase
-below) and the PR description update once that's done.
+**✅ IMPLEMENTED, mostly live-verified on doppio-1.** All six phases
+(11A–11F) are committed on `claude/phase-11-issue-fixes`.
+`go build ./...`, `go vet ./...`, `go test ./...`, and `make build`
+(full go:embed chain) are all clean. Issues #13–#17 are closed with
+fix-summary comments. Live testing on doppio-1 found and fixed several
+real bugs beyond the original diagnoses (see Phase 11E and the SSH
+liveness check in Phase 11C — both root-caused and fixed with evidence,
+not guessed) and confirmed the coreaudiod suppression and full
+NOPASSWD/`headless-macs-debug` flow (enable, disable, and non-interactive
+SSH end to end) working correctly. Not yet merged to main — still open:
+the config-editor teardown confirmation flow hasn't been live-tested
+(see the closeout section below), doppio-2 hasn't been tested at all,
+and the PR description update is pending until those are done.
 
 ---
 
@@ -114,15 +120,14 @@ of seven `phase8Suppressions` entries have `Plist: ""`, which skips the
       (`internal/ops/baseline.go`) with the paths above — the existing
       `bootout` call in the suppression loop then covers them with no
       other code change needed; this is now a one-line-per-service fix.
-- [ ] Confirm `coreaudiod` doesn't immediately respawn after a bare
-      `bootout` without `disable` going first (order already correct in
-      the existing loop — `disable` runs before `bootout` — just needs
-      confirming this actually holds for these three on a real box, after
-      the fix lands).
-- [ ] Update `verify.go`'s corresponding checks (already correct today —
-      they check live state — but confirm they still pass immediately
-      after a single `Baseline` run once this fix lands, not just on
-      next-boot).
+- [x] Confirm `coreaudiod` doesn't immediately respawn after a bare
+      `bootout` without `disable` going first — **confirmed live on
+      doppio-1**: a Verify run after Baseline showed
+      `[PASS] com.apple.audio.coreaudiod not running`, on a separate
+      invocation from Baseline itself (not just momentarily suppressed).
+- [x] Update `verify.go`'s corresponding checks — **confirmed live**,
+      same Verify run above showed all three (`coreaudiod`, `audiomxd`,
+      `AirPlayXPCHelper`) passing immediately after a Baseline run.
 
 **Files touched:** `internal/ops/baseline.go` (`phase8Suppressions` list,
 possibly its shape).
@@ -204,13 +209,21 @@ flagged in the issue as needing live reproduction.
 - [x] Bound `m.scroll` (in all four key handlers — `up`/`down`/`pgup`/`pgdn`)
       and the `"↑ N more above"` count against `len(m.cachedRows)`, not
       `m.checkCount()`.
-- [ ] **After the fix, verify live** (real terminal, real SSH session —
-      this environment can't reproduce it) whether the originally-reported
-      "title bar disappears while scrolling" symptom is actually resolved.
-      If it persists after this fix, it's a separate bug (possibly
-      terminal-client scrollback behavior, as the issue speculates, not a
-      `headless-macs` rendering bug) and needs to be re-opened/re-scoped
-      rather than assumed fixed.
+- [x] **After the fix, verify live** — **confirmed on doppio-1, but the
+      original scroll-index fix alone was not sufficient.** Two more real
+      bugs surfaced and were fixed after this one, on the same branch:
+      (1) `run_screen.go` (Baseline/Storage/Tools/Restore/Update/Debug
+      Tools) had the identical scroll-bounds bug in a separate,
+      near-duplicate screen implementation this fix never touched —
+      fixed the same way. (2) The actual root cause of the header
+      disappearing on Verify was a real lipgloss bug, not a terminal
+      quirk: `Style.Render()` with `Background()` set, given a string
+      with an embedded trailing `\n`, pads a synthetic second line with
+      spaces and no closing newline, merging the "N more above/below"
+      indicator into whatever got written next — reproduced directly
+      against this repo's lipgloss dependency, fixed by moving the `\n`
+      outside the styled `Render()` call in both files (4 call sites).
+      All three fixes are live-confirmed working together on doppio-1.
 
 **Files touched:** `internal/tui/precheck_screen.go`.
 
@@ -326,6 +339,19 @@ with the user; decision made:
       requirement** — same caveat as before: checked against Ollama
       specifically, the mechanism (shared logrotate config) is identical
       across tools, low-risk to leave unverified for the other four.
+      **Confirmed live for Ollama only** — full rotate → bundle → sudo
+      NOPASSWD over non-interactive SSH → `scp` flow all confirmed on
+      doppio-1, including the NOPASSWD enable/disable round-trip (both
+      directions verified: granted access works, revoked access
+      correctly goes back to requiring a password). The other four tools
+      (`rapid-mlx`, `mlx-lm`, `infinity`, `exo`) remain untested — none
+      are enabled on the boxes available for testing. README now says so
+      explicitly under Debugging Tools.
+      **Also found and fixed along the way, not originally anticipated:**
+      the full-path-vs-bare-name gotcha for `headless-macs-debug` over
+      non-interactive SSH (a non-login shell's `$PATH` typically excludes
+      `/usr/local/bin`) — documented in README with the correct
+      full-path invocation.
 
 **4. Install location, distribution, and menu option.**
 
@@ -549,17 +575,27 @@ a new `docs/debugging-guide.md` (usage docs).
       - Phase 11E → [#17](https://github.com/mediumroast/headless-macs/issues/17)
       - Phase 11F has no filed issue (new feature, not a diagnosed bug) —
         nothing to close for it.
-- [ ] **User will test the final build on doppio-1 and doppio-2**
-      directly — this is the live-verification step several phases
-      explicitly called for and this environment can't perform itself:
-      Phase 11B needs confirming `coreaudiod` doesn't respawn after the
-      new `bootout` calls; Phase 11E needs confirming the originally
-      -reported "title bar disappears while scrolling" symptom is
-      actually resolved by the scroll-index fix (not a separate
-      terminal-client issue, per that phase's own open caveat); Phase
-      11F's `NOPASSWD` sudo toggle and the `headless-macs-debug` binary
-      need a real SSH session to confirm the whole non-interactive
-      rotate+capture workflow actually works end to end.
+- [x] **User will test the final build on doppio-1 and doppio-2**
+      directly — **done for doppio-1**: `coreaudiod`/`audiomxd`/
+      `AirPlayXPCHelper` suppression confirmed via Verify, the scroll
+      symptom confirmed fixed (after two additional bugs found and fixed
+      along the way — see Phase 11E's entry above), and the NOPASSWD
+      sudo + `headless-macs-debug` flow confirmed fully end to end
+      including the revoke path. doppio-2 not yet tested.
+- [ ] **Config-editor teardown confirmation flow (issue #13, Phase 11A)
+      not yet live-tested** — the three-way choice (Cancel / Save only /
+      Stop and uninstall) when disabling a tool in Edit Config has only
+      been verified by code review, not exercised live. To test:
+      disable a tool (e.g. `macmon` — lower stakes than Ollama, whose
+      daemon is in active use), try each of the three choices in turn,
+      and for each one check **two** things, not just one — (a)
+      `config.json`'s `enabled` field for that tool (confirms the save
+      happened, or didn't, for Cancel), and (b) actual daemon state via
+      `sudo launchctl print system/com.<tool>.server` (confirms whether
+      the daemon is still running — Save only — or was actually stopped
+      and removed — Stop and uninstall). Checking only the config file
+      wouldn't catch a bug where the wrong choice's daemon-side effect
+      leaked into another choice.
 - [ ] **Once all of Phase 11 (11A–11F) is implemented and merged as
       `v2.3.0`**, update the PR description (not just leave it as
       originally opened) to include a summary of each closed issue and

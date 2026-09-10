@@ -271,41 +271,82 @@ today. This wasn't obvious from the directory-level check alone (which
 only confirmed the directory itself, `755`, was already permissive) —
 the file-level check was the piece that actually settles it.
 
-- [x] **No debug-access toggle needed for read access.** Dropped from
-      scope. `headless-macs-debug logs` doesn't need to change any
+- [x] **No group/permission toggle needed for read access.** Dropped
+      from scope. `headless-macs-debug logs` doesn't need to change any
       permission or add anyone to any group to let an operator read or
-      `scp` a log — that already works.
-- [ ] What `headless-macs-debug logs` *does* still need privilege for is
-      **triggering rotation itself** (`logrotate -f`) — that's a root-only
-      action regardless of group membership, same as every other write
-      operation this project performs, and is exactly what the pre-flight
-      permission check (Q4 below) is checking for. This needs `sudo`, not
-      `wheel` membership — no new group/permission machinery at all.
-- [ ] **Not independently verified for every tool** — this was checked
-      against Ollama's live log files specifically, on both boxes. All
-      tools share the same `installLogRotate()`-generated config and the
-      same `create 644 _llmserver wheel` line (Exo's stanza aside, which
-      uses `wheel`/`staff` for a different reason — see above), so this
-      almost certainly generalizes, but wasn't independently confirmed for
-      Rapid-MLX/mlx-lm/Infinity/Exo/macmon's live files. Worth a quick
-      spot-check of one more tool before fully closing this out, but not
-      worth blocking the plan on — the mechanism generating these files'
-      permissions is identical across tools.
-- [ ] **The literal `wheel`+`774`+toggle ask is no longer needed as
-      designed**, per the evidence above — but if a *future* need for
-      broader operator access shows up (e.g. wanting to delete/rotate
-      logs manually without `sudo`, which 644-world-readable doesn't
-      grant), the toggle design above is still sound and can be revisited
-      then. Not building it now against a problem that turned out to
-      already be solved.
+      `scp` a log — that already works. `644` grants *read*, not *write*
+      — `logrotate -f`'s `copytruncate` needs to truncate the original
+      file in place, which does need write access, so this doesn't fully
+      dispose of the privilege question — see the write-access design
+      below.
 
-**4. Install location + a menu option to install/update it.**
+**The real remaining question: how does a non-interactive SSH session
+get the privilege to run `logrotate -f` (which needs write access root
+already has, that plain `644`-world-readable doesn't grant) without an
+interactive sudo password prompt?** Discussed three options directly
+with the user; decision made:
 
-**Revised per user direction:** the standalone tool is named
-`headless-macs-debug` (not `headless-macs-debug-logs`), installed to
-`/usr/local/bin/headless-macs-debug` — room for more subcommands beyond
-logs later, rather than a single-purpose script name that would need
-renaming/aliasing the moment a second debugging function shows up.
+- **Ruled out: widening group write access.** Group `wheel` today only
+  has *read* (`644`). Granting the group write access so any
+  `_llmserver:wheel`-group member could truncate live logs is a bigger
+  and stranger blast radius than either option below — any group member
+  could rotate/corrupt any service's live logs at any time, not just the
+  one operator running the debug tool.
+- **Ruled out: setuid-root binary.** Real option, but: (a) **macOS's
+  kernel ignores the setuid bit on interpreted scripts** (any `#!`
+  shebang script) — this has been standard Unix kernel behavior since
+  the 1990s, closing a well-known TOCTOU race-condition exploit class —
+  so this path would have required `headless-macs-debug` to be a
+  compiled binary regardless of the separate binary-vs-script decision
+  below; (b) a setuid-root binary is a classic, well-studied
+  privilege-escalation surface — any bug in it (path handling, argument
+  injection, a trusted environment variable) becomes a root exploit for
+  anyone who can execute it, and it loses the accountability trail
+  `sudo`'s own logging provides (who ran what, when) unless the binary
+  does its own logging. A meaningfully bigger security commitment than
+  anything else in this project, which has deliberately kept every
+  daemon unprivileged (`_llmserver`, not root) specifically to avoid this
+  class of risk.
+- [x] **Adopted: narrowly-scoped passwordless (`NOPASSWD`) sudo,
+      toggleable.** A `sudoers.d` drop-in granting a specific operator
+      user `NOPASSWD` access to *exactly* one command (not blanket
+      `NOPASSWD: ALL`) — the standard, well-trodden Unix pattern for
+      "let this one automated action run as root without an interactive
+      prompt." Every invocation still shows up in `sudo`'s own audit log
+      tied to the real invoking user — accountability preserved, unlike
+      setuid. Reversible: removing the drop-in file fully revokes it.
+      **Must be toggleable from the TUI** (user requirement) and **must
+      be documented in `README.md`** as an explicit escalation/
+      de-escalation path — see the new checklist items below.
+- [ ] **Not independently verified for every tool's write-side
+      requirement** — same caveat as before: checked against Ollama
+      specifically, the mechanism (shared logrotate config) is identical
+      across tools, low-risk to leave unverified for the other four.
+
+**4. Install location, distribution, and menu option.**
+
+**Finalized per user direction:** `headless-macs-debug` is a **small
+compiled Go binary**, not a shell script — this was already the forced
+outcome if setuid had been chosen (macOS ignores setuid on scripts), and
+the user has now chosen it directly regardless, so the binary-vs-script
+open question from earlier is resolved. Named `headless-macs-debug`
+(not `headless-macs-debug-logs`) — room for more subcommands beyond
+`logs` later, rather than a single-purpose name needing renaming the
+moment a second debugging function shows up.
+
+**Distribution architecture (new decision, needed now that it's a real
+binary, not a string constant):** a second `cmd/` entry,
+`cmd/headless-macs-debug/main.go`, built as its own artifact by the
+`Makefile`. To keep single-binary distribution for the *operator*
+(today, copying just `headless-macs` to a target box is enough — that
+should stay true), the main `headless-macs` binary should `//go:embed`
+the compiled `headless-macs-debug` binary's bytes at build time (Go's
+`embed` package, same major-version toolchain this project already
+requires) and `RunDebugTools()` writes those embedded bytes out to
+`/usr/local/bin/headless-macs-debug` + `chmod +x` when installed/updated.
+This needs `Makefile` changes to build `cmd/headless-macs-debug` *before*
+`cmd/headless-macs` (embed source must exist at build time) — a real,
+non-trivial build-ordering change worth flagging, not a one-line addition.
 
 - [ ] `headless-macs-debug logs` — the rotate+bundle capability from Q1,
       runnable with no other flags for the "just rotate everything and
@@ -314,32 +355,47 @@ renaming/aliasing the moment a second debugging function shows up.
       `tar.gz`, print the path, exit 0/non-zero for success/failure (and
       only that — no interactive prompts, so it works cleanly over a bare
       `ssh host headless-macs-debug logs`).
-- [ ] No `debug-access enable|disable` subcommand — dropped, per the
-      finding above that there's no read-access gap to toggle.
-- [ ] **Permission check before doing anything**, per the user's
-      explicit requirement: `headless-macs-debug logs` must confirm the
-      invoking user can actually run `logrotate` (root, or `sudo`) before
-      attempting anything, and fail fast with a clear message if not —
-      not attempt partial work and fail confusingly partway through. A
-      single, simple check now that the toggle is out of scope.
+- [ ] **Permission check before doing anything**: confirm the invoking
+      user can actually run `logrotate` as root — either already root, or
+      covered by the `NOPASSWD` grant below — before attempting anything,
+      and fail fast with a clear message (naming the `debug-tools`
+      command to enable escalation) if not.
 - [ ] New `internal/ops/debugtools.go` — `RunDebugTools(cfg *config.Config)`
-      — writes the script content (a Go string constant, same pattern as
-      this project's plist-content constants) to
-      `/usr/local/bin/headless-macs-debug`, `chmod +x`, reports
-      `[SET]`/`[SKIP]` by content comparison (same idempotency pattern as
-      `installLaunchDaemon` — compare content, not just existence).
-      Whether `headless-macs-debug` itself is implemented as a shell
-      script (matches "install a script" from the user's original ask,
-      simplest to embed as a Go string constant) or a second small Go
-      binary (more consistent with this project's general move away from
-      shell, better structured multi-subcommand handling) is worth a
-      explicit decision before implementation — leaning shell script per
-      the literal ask and to avoid a second compiled artifact/build
-      target, but flagging the tradeoff rather than deciding unilaterally.
+      — installs/updates the embedded `headless-macs-debug` binary
+      (`[SET]`/`[SKIP]` by content comparison, same idempotency pattern as
+      `installLaunchDaemon`), **and** syncs the `NOPASSWD` sudoers grant to
+      match a config-driven toggle (see below) — one function covering
+      both halves of "Install/Update Debugging Tools."
+- [ ] **`NOPASSWD` toggle, config-driven** (recommended design — matches
+      this project's existing "config declares intent, an apply step
+      realizes it" model, e.g. `tools.X.enabled`, rather than inventing a
+      new interaction pattern): a new `debug.sudo_nopasswd_enabled` (name
+      TBD) boolean in `config.json`, editable in the existing Edit Config
+      screen like any other boolean — reuses that screen's already-built
+      toggle UI rather than a new one. `RunDebugTools()` reads this on
+      every run and syncs `/etc/sudoers.d/headless-macs-debug` to match:
+      writes a narrowly-scoped grant (`Cmnd_Alias` pinned to the literal
+      `/usr/local/bin/headless-macs-debug` path, validated with
+      `visudo -c` before installing — a malformed sudoers file is a real
+      way to break `sudo` system-wide, this check is not optional) when
+      `true` and the file is missing; removes it when `false` and present.
+      Needs a target username — the config key's value, or derived from
+      `SUDO_USER`/an explicit prompt; TBD which.
+- [ ] **`README.md` documentation of the escalation/de-escalation path**
+      (explicit user requirement) — a new section (near the existing
+      "Security scope" callout, matching its tone) explaining: exactly
+      what `NOPASSWD` access is granted and to which single command, why
+      (`headless-macs-debug logs` needs to run non-interactively over
+      SSH), how to check whether it's currently enabled, how to disable
+      it, and the honest tradeoff (narrowly scoped to one exact binary
+      path, not blanket root access — but still real elevated access,
+      enable it deliberately, not by default).
 - [ ] New CLI subcommand `headless-macs debug-tools` (installs/updates
-      `headless-macs-debug` itself — distinct from `headless-macs-debug`
-      the installed tool), alongside the existing
-      `precheck`/`baseline`/`install-tools`/etc. in `cmd/headless-macs/main.go`.
+      `headless-macs-debug` and syncs the sudoers grant to the config
+      toggle's current state — one command covers both, since the
+      config edit already happened in Edit Config), alongside the
+      existing `precheck`/`baseline`/`install-tools`/etc. in
+      `cmd/headless-macs/main.go`.
 - [ ] New TUI sidebar entry — user's suggested framing "Install/Update
       Debugging Tools" (exact label TBD, needs to fit the sidebar's width
       budget — see `internal/tui/menu.go`'s existing items for the
@@ -348,17 +404,22 @@ renaming/aliasing the moment a second debugging function shows up.
       `RunScreen` pattern already used for Baseline/Install Tools/Update
       Tools/Storage (`internal/tui/run_screen.go` already generically
       renders any `ops` result's `[SET]`/`[SKIP]`/`[WARN]` actions — this
-      should slot in without a new screen type).
+      should slot in without a new screen type, since `RunDebugTools()`'s
+      output is the same `[SET]`/`[SKIP]`/`[WARN]` action-list shape as
+      every other ops function).
 
 **Scope:** New capability — Minor version bump (new subcommand, new
-config surface only if the wheel/`_llmserver` decision needs a config
-key, which it likely doesn't since group membership is a one-time
-`baseline`-style action, not an ongoing config toggle).
+`cmd/` build target, new `config.json` key, new sudoers-file management).
 
-**Files touched:** new `internal/ops/debugtools.go`, `cmd/headless-macs/main.go`
-(new subcommand + usage text), `internal/tui/menu.go` (new sidebar item),
+**Files touched:** new `cmd/headless-macs-debug/main.go`, new
+`internal/ops/debugtools.go`, `internal/config/config.go` (new
+`debug.sudo_nopasswd_enabled` key), `internal/tui/config_editor.go` (new
+toggle field), `cmd/headless-macs/main.go` (new subcommand + usage text,
+`//go:embed` directive), `internal/tui/menu.go` (new sidebar item),
 `internal/tui/app.go` (new screen routing, reusing `RunScreen`),
-`docs/known-issues.md` and/or a new `docs/debugging-guide.md` (usage docs).
+`Makefile` (build-order change for the new `cmd/` target), `README.md`
+(escalation/de-escalation documentation), `docs/known-issues.md` and/or
+a new `docs/debugging-guide.md` (usage docs).
 
 ---
 
@@ -389,27 +450,44 @@ key, which it likely doesn't since group membership is a one-time
    explicit deliberate move to reach).
 4. ~~Issue #14's plist-path confirmation~~ — **resolved**, see Phase 11B
    above; both doppio-1 and doppio-2 agree.
-5. ~~Phase 11F script name~~ — **resolved**: `headless-macs-debug`
-   (binary/script name) with a `logs` subcommand — no second `debug-access`
-   subcommand, per #1 above.
+5. ~~Phase 11F script name~~ — **resolved**: `headless-macs-debug`.
+6. ~~`headless-macs-debug` implementation form~~ — **resolved: compiled
+   Go binary**, not a shell script (also the forced outcome had setuid
+   been chosen instead — macOS ignores setuid on scripts). New
+   `cmd/headless-macs-debug/` build target, distributed via `go:embed` in
+   the main `headless-macs` binary so operators still only need to copy
+   one file. See Phase 11F's revised Q4.
+7. ~~Debug-access mechanism~~ — **resolved: narrowly-scoped, toggleable
+   `NOPASSWD` sudo**, not setuid or group-write widening. Config-driven
+   toggle (`debug.sudo_nopasswd_enabled`, exact key name TBD), synced by
+   `RunDebugTools()`/`headless-macs debug-tools`, documented in
+   `README.md`. See Phase 11F's revised Q2&3 and Q4 above.
 8. ~~Exact permission mode for `/var/log/<service>`~~ — **resolved**:
-   confirmed `_llmserver:wheel 644` on live log files, both boxes — no
-   mode change needed at all. Checked against Ollama specifically; all
-   tools share the same `installLogRotate()`-generated config and the
-   same `create 644 _llmserver wheel` line, so this almost certainly
-   generalizes, but wasn't independently spot-checked for the other four
-   tools — low-risk to leave unverified given the shared mechanism, not
-   worth blocking on.
+   confirmed `_llmserver:wheel 644` on live log files, both boxes — read
+   access needs no change; the write-side gap (needed for rotation) is
+   what the `NOPASSWD` sudo grant above solves. Checked against Ollama
+   specifically; all tools share the same `installLogRotate()`-generated
+   config, so this almost certainly generalizes, but wasn't independently
+   spot-checked for the other four tools — low-risk to leave unverified.
 
 **Still open:**
 
-6. **`headless-macs-debug` implementation form** — shell script (simpler,
-   matches "install a script" literally, embeds as a Go string constant
-   like this project's plist content) vs. a second small Go binary (more
-   consistent with the project's general shell→Go migration, cleaner
-   multi-subcommand handling) — see Phase 11F's revised Q4.
-7. ~~Debug-access auto-expiry~~ — **moot**, no toggle to expire per #1
-   above.
+9. **`debug.sudo_nopasswd_enabled` target username** — the sudoers grant
+   needs a specific username to scope to. Options: a second config key
+   naming the operator explicitly, derive from `SUDO_USER` at the moment
+   `debug-tools` is run (simplest, but ties the grant to whoever happened
+   to run the install step), or prompt interactively in the TUI. Needs a
+   decision before implementation.
+10. **Exact `Cmnd_Alias` scope** — pin the `NOPASSWD` grant to the whole
+    `/usr/local/bin/headless-macs-debug` path (simpler sudoers rule,
+    covers future subcommands without re-editing sudoers each time,
+    relies on the binary's own internal logic to stay narrow) vs. pin it
+    to `/usr/local/bin/headless-macs-debug logs` specifically (tighter,
+    but needs a sudoers update if a second subcommand is added later
+    that also needs root). Leaning toward the whole-binary-path grant
+    given `headless-macs-debug` is a small, purpose-built, project-owned
+    binary rather than something with a large or untrusted surface — but
+    flagging the tradeoff rather than deciding unilaterally.
 
 ---
 
@@ -417,8 +495,6 @@ key, which it likely doesn't since group membership is a one-time
 
 | File | Phase(s) |
 |---|---|
-| `internal/config/config.go` | 11A |
-| `internal/tui/config_editor.go` | 11A |
 | `internal/tui/restore_confirm.go` (or new sibling) | 11A |
 | `internal/ops/restore.go` | 11A |
 | `internal/ops/disable.go` (new, name TBD) | 11A |
@@ -426,10 +502,15 @@ key, which it likely doesn't since group membership is a one-time
 | `internal/ops/verify.go` | 11C |
 | `internal/ops/update.go` | 11D |
 | `internal/tui/precheck_screen.go` | 11E |
+| `cmd/headless-macs-debug/main.go` (new) | 11F |
 | `internal/ops/debugtools.go` (new) | 11F |
+| `internal/config/config.go` | 11A, 11F |
+| `internal/tui/config_editor.go` | 11A, 11F |
 | `cmd/headless-macs/main.go` | 11F |
 | `internal/tui/menu.go` | 11F |
 | `internal/tui/app.go` | 11F |
+| `Makefile` | 11F |
+| `README.md` | 11F |
 | `docs/tool-comparison.md` | 11D (follow-up) |
 | `docs/known-issues.md` / new `docs/debugging-guide.md` | 11F |
 | `CHANGELOG.md` | all — end-of-session update |

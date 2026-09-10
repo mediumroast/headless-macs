@@ -41,6 +41,7 @@ var menuItems = []MenuItem{
 	{Label: "Verify", Key: "v", Ready: true},
 	{Label: "Restore", Key: "r", Ready: true},
 	{Label: "Update Tools", Key: "u", Ready: true},
+	{Label: "Debugging Tools", Key: "x", Ready: true},
 	{Label: "Quit", Key: "q", Ready: true},
 }
 

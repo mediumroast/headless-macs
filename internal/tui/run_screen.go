@@ -81,6 +81,19 @@ func runUpdateCmd(cfg *config.Config) tea.Cmd {
 	}
 }
 
+// DebugToolsDoneMsg is sent when RunDebugTools completes.
+type DebugToolsDoneMsg struct {
+	Result *ops.DebugToolsResult
+	Err    error
+}
+
+func runDebugToolsCmd(sudoNopasswdEnabled bool, username string) tea.Cmd {
+	return func() tea.Msg {
+		result, err := ops.RunDebugTools(sudoNopasswdEnabled, username)
+		return DebugToolsDoneMsg{Result: result, Err: err}
+	}
+}
+
 type runState int
 
 const (
@@ -92,18 +105,19 @@ const (
 // It handles BaselineResult, StorageResult, ToolsResult, RestoreResult, and
 // UpdateResult by normalising them via stageActions()/stageSummary().
 type RunScreenModel struct {
-	title         string
-	state         runState
-	spinner       spinner.Model
-	result        *ops.BaselineResult
-	storageResult *ops.StorageResult
-	toolsResult   *ops.ToolsResult
-	restoreResult *ops.RestoreResult
-	updateResult  *ops.UpdateResult
-	err           error
-	scroll        int
-	width         int
-	height        int
+	title            string
+	state            runState
+	spinner          spinner.Model
+	result           *ops.BaselineResult
+	storageResult    *ops.StorageResult
+	toolsResult      *ops.ToolsResult
+	restoreResult    *ops.RestoreResult
+	updateResult     *ops.UpdateResult
+	debugToolsResult *ops.DebugToolsResult
+	err              error
+	scroll           int
+	width            int
+	height           int
 }
 
 func NewRunScreen(title string) RunScreenModel {
@@ -150,6 +164,11 @@ func (m RunScreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case UpdateDoneMsg:
 		m.updateResult = msg.Result
+		m.err = msg.Err
+		m.state = runStateDone
+
+	case DebugToolsDoneMsg:
+		m.debugToolsResult = msg.Result
 		m.err = msg.Err
 		m.state = runStateDone
 
@@ -303,6 +322,8 @@ func (m RunScreenModel) stageSummary() (sets, skips, warns, fails int, logPath s
 		return m.restoreResult.Sets, m.restoreResult.Skips, m.restoreResult.Warnings, m.restoreResult.Failures, m.restoreResult.LogPath
 	case m.updateResult != nil:
 		return m.updateResult.Sets, m.updateResult.Skips, m.updateResult.Warnings, m.updateResult.Failures, m.updateResult.LogPath
+	case m.debugToolsResult != nil:
+		return m.debugToolsResult.Sets, m.debugToolsResult.Skips, m.debugToolsResult.Warnings, m.debugToolsResult.Failures, m.debugToolsResult.LogPath
 	}
 	return
 }
@@ -319,6 +340,8 @@ func (m RunScreenModel) stageActions() []ops.BaselineAction {
 		return m.restoreResult.Actions
 	case m.updateResult != nil:
 		return m.updateResult.Actions
+	case m.debugToolsResult != nil:
+		return m.debugToolsResult.Actions
 	}
 	return nil
 }

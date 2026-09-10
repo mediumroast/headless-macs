@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/mediumroast/headless-macs/internal/config"
@@ -46,23 +47,26 @@ const (
 	screenRestore
 	screenUpdate
 	screenTeardownConfirm
+	screenDebugToolsPrompt
+	screenDebugTools
 )
 
 // App is the top-level Bubble Tea model. It owns the sidebar, the active
 // content pane, and routes messages between them.
 type App struct {
-	screen          screen
-	configEditor    ConfigEditorModel
-	sidebar         MenuModel
-	dashboard       DashboardModel
-	precheck        PrecheckModel
-	runScreen       RunScreenModel
-	restoreConfirm  RestoreConfirmModel
-	teardownConfirm TeardownConfirmModel
-	cfg             *config.Config
-	width           int
-	height          int
-	errMsg          string
+	screen           screen
+	configEditor     ConfigEditorModel
+	sidebar          MenuModel
+	dashboard        DashboardModel
+	precheck         PrecheckModel
+	runScreen        RunScreenModel
+	restoreConfirm   RestoreConfirmModel
+	teardownConfirm  TeardownConfirmModel
+	debugToolsPrompt DebugToolsPromptModel
+	cfg              *config.Config
+	width            int
+	height           int
+	errMsg           string
 }
 
 // NewApp creates the App. cfg is the loaded config (or nil on first run,
@@ -131,6 +135,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.restoreConfirm = rc.(RestoreConfirmModel)
 		tc, _ := a.teardownConfirm.Update(contentMsg)
 		a.teardownConfirm = tc.(TeardownConfirmModel)
+		dp, _ := a.debugToolsPrompt.Update(contentMsg)
+		a.debugToolsPrompt = dp.(DebugToolsPromptModel)
 		return a, nil
 
 	case SavedMsg:
@@ -233,9 +239,21 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.runScreen = updated.(RunScreenModel)
 		return a, cmd
 
+	case DebugToolsUsernameMsg:
+		_, contentW, paneH := a.contentDims()
+		a.runScreen = NewRunScreen("Debugging Tools")
+		a.runScreen.width, a.runScreen.height = contentW, paneH
+		a.screen = screenDebugTools
+		return a, tea.Batch(runDebugToolsCmd(true, msg.Username), a.runScreen.spinner.Tick)
+
+	case DebugToolsDoneMsg:
+		updated, cmd := a.runScreen.Update(msg)
+		a.runScreen = updated.(RunScreenModel)
+		return a, cmd
+
 	case spinner.TickMsg:
 		switch a.screen {
-		case screenBaseline, screenStorage, screenTools, screenRestore, screenUpdate:
+		case screenBaseline, screenStorage, screenTools, screenRestore, screenUpdate, screenDebugTools:
 			if a.runScreen.state == runStateRunning {
 				updated, cmd := a.runScreen.Update(msg)
 				a.runScreen = updated.(RunScreenModel)
@@ -274,7 +292,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			updated, cmd := a.precheck.Update(msg)
 			a.precheck = updated.(PrecheckModel)
 			return a, cmd
-		case screenBaseline, screenStorage, screenTools, screenRestore, screenUpdate:
+		case screenBaseline, screenStorage, screenTools, screenRestore, screenUpdate, screenDebugTools:
 			updated, cmd := a.runScreen.Update(msg)
 			a.runScreen = updated.(RunScreenModel)
 			return a, cmd
@@ -285,6 +303,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case screenTeardownConfirm:
 			updated, cmd := a.teardownConfirm.Update(msg)
 			a.teardownConfirm = updated.(TeardownConfirmModel)
+			return a, cmd
+		case screenDebugToolsPrompt:
+			updated, cmd := a.debugToolsPrompt.Update(msg)
+			a.debugToolsPrompt = updated.(DebugToolsPromptModel)
 			return a, cmd
 		}
 	}
@@ -339,6 +361,17 @@ func (a App) handleMenuSelect(idx int) (tea.Model, tea.Cmd) {
 		a.runScreen.width, a.runScreen.height = contentW, paneH
 		a.screen = screenUpdate
 		return a, tea.Batch(runUpdateCmd(a.cfg), a.runScreen.spinner.Tick)
+	case "x":
+		if a.cfg.Debug.SudoNopasswdEnabled {
+			a.debugToolsPrompt = NewDebugToolsPromptModel()
+			a.debugToolsPrompt.width, a.debugToolsPrompt.height = contentW, paneH
+			a.screen = screenDebugToolsPrompt
+			return a, textinput.Blink
+		}
+		a.runScreen = NewRunScreen("Debugging Tools")
+		a.runScreen.width, a.runScreen.height = contentW, paneH
+		a.screen = screenDebugTools
+		return a, tea.Batch(runDebugToolsCmd(false, ""), a.runScreen.spinner.Tick)
 	default:
 		a.errMsg = fmt.Sprintf("%s is not yet implemented (coming in a future phase).", item.Label)
 		return a, nil
@@ -355,12 +388,14 @@ func (a App) activeBody() string {
 		return a.dashboard.Body()
 	case screenPrecheck, screenVerify:
 		return a.precheck.Body()
-	case screenBaseline, screenStorage, screenTools, screenRestore, screenUpdate:
+	case screenBaseline, screenStorage, screenTools, screenRestore, screenUpdate, screenDebugTools:
 		return a.runScreen.Body()
 	case screenRestoreConfirm:
 		return a.restoreConfirm.Body()
 	case screenTeardownConfirm:
 		return a.teardownConfirm.Body()
+	case screenDebugToolsPrompt:
+		return a.debugToolsPrompt.Body()
 	}
 	return ""
 }
@@ -373,12 +408,14 @@ func (a App) activeStatusHints() string {
 		return a.dashboard.StatusHints()
 	case screenPrecheck, screenVerify:
 		return a.precheck.StatusHints()
-	case screenBaseline, screenStorage, screenTools, screenRestore, screenUpdate:
+	case screenBaseline, screenStorage, screenTools, screenRestore, screenUpdate, screenDebugTools:
 		return a.runScreen.StatusHints()
 	case screenRestoreConfirm:
 		return a.restoreConfirm.StatusHints()
 	case screenTeardownConfirm:
 		return a.teardownConfirm.StatusHints()
+	case screenDebugToolsPrompt:
+		return a.debugToolsPrompt.StatusHints()
 	}
 	return ""
 }
@@ -409,6 +446,8 @@ func (a App) screenName() string {
 		return "Update Tools"
 	case screenTeardownConfirm:
 		return "Confirm"
+	case screenDebugToolsPrompt, screenDebugTools:
+		return "Debugging Tools"
 	}
 	return a.sidebar.currentLabel()
 }

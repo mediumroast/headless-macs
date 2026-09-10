@@ -534,6 +534,10 @@ func buildFields(cfg *config.Config) []field {
 	f = append(f, field{kind: kindSectionHeader, label: "TUI"})
 	f = append(f, intField("Dashboard Refresh (ms)", func() int { return cfg.TUI.DashboardRefreshMs }, func(v int) { cfg.TUI.DashboardRefreshMs = v }))
 
+	// ── DEBUG ─────────────────────────────────────────────────
+	f = append(f, field{kind: kindSectionHeader, label: "DEBUG"})
+	f = append(f, boolField("Sudo NOPASSWD for headless-macs-debug", func() bool { return cfg.Debug.SudoNopasswdEnabled }, func(v bool) { cfg.Debug.SudoNopasswdEnabled = v }))
+
 	return f
 }
 

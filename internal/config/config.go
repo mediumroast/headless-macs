@@ -17,6 +17,17 @@ type Config struct {
 	System  System  `json:"system"`
 	Network Network `json:"network"`
 	TUI     TUI     `json:"tui"`
+	Debug   Debug   `json:"debug"`
+}
+
+// Debug holds settings for headless-macs-debug, the standalone debugging
+// utility (Phase 11F). Added for its NOPASSWD sudo toggle.
+type Debug struct {
+	// SudoNopasswdEnabled declares intent only — the target username is
+	// never stored here (prompted interactively and validated at the
+	// moment the toggle is applied, not persisted), so `headless-macs
+	// debug-tools` is what actually syncs /etc/sudoers.d to match this.
+	SudoNopasswdEnabled bool `json:"sudo_nopasswd_enabled"`
 }
 
 // TUI holds settings for the interactive terminal UI itself, as opposed

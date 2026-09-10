@@ -114,6 +114,7 @@ Every TUI function except Edit Config is available as a subcommand for scripting
 | `v` | Verify | `verify` |
 | `r` | Restore | `restore` |
 | `u` | Update Tools | `update-tools` |
+| `x` | Debugging Tools | `debug-tools` |
 | `c` | Edit Config | *(none — edit `config.json` directly, or use the TUI)* |
 
 Besides `status --watch`, no subcommand takes any flags beyond the global `--help`/`--version` — nothing here is configurable from the command line itself:
@@ -138,6 +139,32 @@ box was last configured by a different version of the binary than the one
 currently running — the same nudge the Dashboard shows.
 
 Output uses the same `[SET]`/`[SKIP]`/`[WARN]`/`[PASS]`/`[FAIL]` prefix convention as the v1 shell scripts, teed to `/var/log/mac-llm-setup/`. Exit codes: `0` = success, `1` = failures, `2` = warnings only.
+
+---
+
+## Debugging Tools
+
+`headless-macs-debug` is a small, separate binary for pulling logs off a node without needing the full TUI — installed alongside `headless-macs` itself, not a subcommand of it. Install/update it via `x` in the TUI sidebar or `sudo headless-macs debug-tools`.
+
+```bash
+sudo headless-macs-debug logs          # rotate + bundle every managed tool's logs
+sudo headless-macs-debug logs ollama   # same, narrowed to one tool (ollama, rapid-mlx, mlx-lm, infinity, exo, macmon)
+```
+
+Each run forces an out-of-cycle rotation using the same shared `logrotate` config `install-tools` already writes (nothing new to configure), then bundles the result into a timestamped `tar.gz` under `/var/log/mac-llm-setup/bundles/` and prints its path. Pulling it off the box is a plain `scp` — this tool never pushes anywhere itself.
+
+### Passwordless sudo — an explicit escalation you opt into
+
+`headless-macs-debug logs` needs to run as root (log rotation has to truncate files it doesn't own), so over a plain SSH session you'd normally hit an interactive sudo password prompt — awkward for scripted/automated pulls. `headless-macs` can grant one specific user passwordless (`NOPASSWD`) sudo access for exactly that one binary, and only that binary — not `NOPASSWD: ALL`, not broader admin rights.
+
+**Enabling it:**
+1. In Edit Config (`c`), turn on **Sudo NOPASSWD for headless-macs-debug** under the DEBUG section, then save.
+2. Run `x` (Debugging Tools) or `sudo headless-macs debug-tools`. You'll be prompted for a username — it's never stored in `config.json`, only collected at this moment — checked to actually exist before anything is written.
+3. This writes `/etc/sudoers.d/headless-macs-debug`, validated with `visudo -c` before being installed (a malformed sudoers file can break `sudo` system-wide, so this check always runs). Every invocation still shows up in `sudo`'s own audit log tied to the real user — this is not the same as making the binary run as root regardless of who invokes it (that would be a `setuid` binary, which this deliberately isn't; macOS's kernel ignores `setuid` on scripts, and a `setuid`-root binary is a meaningfully bigger security surface than a scoped sudoers rule — every daemon this project runs is deliberately unprivileged for the same reason).
+
+**Disabling it:** turn the toggle back off in Edit Config, then run `x` / `debug-tools` again — this removes `/etc/sudoers.d/headless-macs-debug` entirely, no username needed.
+
+**The honest tradeoff:** this is real elevated access for one user, even though it's narrowly scoped to one binary. Leave it off by default; enable it deliberately when you actually need non-interactive log pulls over SSH, and turn it back off when you're done — it's not designed to be left on as a standing state.
 
 ---
 

@@ -29,6 +29,10 @@ install: build
 	sudo cp $(BINARY) $(INSTALL)
 	sudo chmod 755 $(INSTALL)
 	@echo "Installed to $(INSTALL)"
+	@echo "Note: $(DEBUG_BINARY) is not installed by this target — it installs"
+	@echo "itself to /usr/local/bin (and sets up the sudo NOPASSWD grant, if"
+	@echo "enabled) the first time you run: sudo headless-macs debug-tools"
+	@echo "(or the 'Debugging Tools' TUI menu item)."
 
 clean:
 	rm -f $(BINARY)

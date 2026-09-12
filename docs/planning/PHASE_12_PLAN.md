@@ -71,26 +71,41 @@ stores) — so, like 12A, this isn't a pure rename.
 one), so Verify has been reporting `[PASS] OLLAMA_LOG_LEVEL configured` this
 whole time despite the setting doing nothing.
 
-**Decision needed:** how should `tools.ollama.log_level` (currently a string,
-default `"warn"`) map onto `OLLAMA_DEBUG`? Proposed default, happy to change:
+**Resolved: follow what Ollama actually documents, not an invented enum.**
+Checked further — the *only* documented usage of `OLLAMA_DEBUG` anywhere in
+Ollama's own repo (searched `docs/*.mdx`) is `OLLAMA_DEBUG=1` in
+`troubleshooting.mdx`, a plain on/off boolean. The `N * -4` multi-level slog
+math in `envconfig.LogLevel()` is an internal implementation detail, never
+part of any documented interface — so a `"trace"`/level-2 tier would be *us*
+inventing something on top of Ollama's real, documented surface, the exact
+mistake this phase exists to undo.
 
-| Config `log_level` | `OLLAMA_DEBUG` written |
+`tools.ollama.log_level` (string, default `"warn"`) is replaced with
+**`tools.ollama.debug` (bool, default `false`)** — a straight mirror of
+Ollama's own documented variable, nothing added:
+
+| Config `debug` | `OLLAMA_DEBUG` written |
 |---|---|
-| `"warn"` / `"info"` / unset | *(omit the key entirely — Ollama's own default)* |
-| `"debug"` | `1` |
-| `"trace"` | `2` |
+| `false` (default) | *(omit the key entirely — Ollama's own default)* |
+| `true` | `1` |
 
-This keeps the existing config key and its friendly string values working
-exactly as before from the user's point of view — only the internal
-translation to what actually gets written into the plist changes.
+This is a field rename, not just a value remap — `log_level`'s string enum
+(`"warn"`/`"debug"`/`"trace"`) never corresponded to anything Ollama
+recognized either, so keeping the string shape while only fixing the plist
+key would still leave a fabricated-shaped setting in `config.json`.
 
 **Files touched:**
+- `internal/config/config.go` — replace `LogLevel string` with `Debug bool`
+  on `OllamaTool`
+- `config.json` — replace `"log_level": "warn"` with `"debug": false`
 - `internal/ops/tools.go` — replace the `OLLAMA_LOG_LEVEL` plist key with
-  `OLLAMA_DEBUG`, add the string→numeric mapping above in `installOllama()`
+  `OLLAMA_DEBUG`, write `1` when `cfg.Tools.Ollama.Debug` else omit the key
 - `internal/ops/verify.go` — change the presence check to check for
   `OLLAMA_DEBUG` instead (still a syntax check, matching the same shallow
   depth as this check has always had for other tools — not scope-creeping
   into a live-behavior check here)
+- `internal/tui/config_editor.go` — rename the corresponding Edit Config
+  field (a string-value field becomes a boolean toggle, same section)
 
 ---
 
@@ -119,32 +134,18 @@ going on right now" pull.
 per stream / 6 per tool. The rotation count (`2` above) must be
 **configurable**, not hardcoded.
 
-**Sub-decision needed — how should it be configurable?**
-`headless-macs-debug` is deliberately standalone (see the file's own header
-comment and `toolLogDirs`'s comment — it keeps small local copies of things
-rather than importing `internal/config`/`internal/ops`, so it stays a single
-self-contained binary). Two ways to honor "configurable" without breaking
-that:
+**Resolved: a `--keep=N` CLI flag on `logs` (default `2`), not a config-file
+field.** Reason (per user): this tool is used over SSH, where the config
+file may not be conveniently reachable/known from that session — a flag
+works everywhere the binary itself does, with no dependency on where
+`~/.headless_macs/config.json` lives or whose home directory it's under.
+This also simplifies 12C's implementation: no config-file parsing, no
+sudo-invoking-user home-directory resolution needed in
+`headless-macs-debug` at all — it stays exactly as standalone as it already
+is today, just with one more flag.
 
-- **(a) Read `config.json` directly, but minimally** — `headless-macs-debug`
-  parses just the one field it needs (e.g. a new `debug.log_bundle_rotations`
-  int, default `2`) out of `~/.headless_macs/config.json`, without importing
-  `internal/config`'s full struct or the `internal/ops` package. Since this
-  always runs as root (already required for rotation), it needs the same
-  "whose home directory" logic `internal/ops/baseline.go`'s `sudoUID()`
-  already has (find the invoking user via `$SUDO_UID`, not root's own home)
-  — a small, local duplicate of that one helper, matching how `toolLogDirs`
-  is already a local duplicate of `internal/ops/tools.go`'s paths. Fits the
-  project's "config-driven, no hardcoded values" principle most closely, and
-  means the TUI's Edit Config screen could expose it like any other setting.
-- **(b) A `--keep=N` flag on `logs` itself** (default `2`) — simpler,
-  no config-file parsing or sudo-user resolution needed, but the setting has
-  to be remembered and typed on every invocation rather than being a
-  standing preference, and can't be exposed in the Edit Config TUI screen.
-
-Defaulting to **(a)** to match the project's own stated config-driven
-philosophy, but this is the one with the most implementation weight of the
-three open questions, so flagging it clearly rather than assuming.
+`sudo headless-macs-debug logs [tool] [--keep=N]` — `--keep` applies to both
+`logs` (bare, all tools) and `logs <tool>` forms.
 
 **Files touched:**
 - `cmd/headless-macs-debug/main.go` — `runLogs()` (drop `opsLogDir` append),
@@ -191,21 +192,26 @@ follow-up if the manual version proves annoying to use.
 ## Files-touched summary (all phases)
 
 - `internal/ops/tools.go` — 12A, 12B
-- `internal/config/config.go` — 12A, 12C (if option a)
-- `config.json` — 12A, 12C (if option a)
+- `internal/config/config.go` — 12A, 12B
+- `config.json` — 12A, 12B
 - `internal/ops/verify.go` — 12B
-- `internal/tui/config_editor.go` — 12C (if option a)
+- `internal/tui/config_editor.go` — 12B
 - `cmd/headless-macs-debug/main.go` — 12C, 12D
 - `README.md` — 12D
 - `CHANGELOG.md` — `[Unreleased]` entries for all four, per the end-of-session
   convention, moved to a dated `v2.3.1` section once implemented and merged
 
-## Open questions before implementing (see each phase above for detail)
+## Open questions
 
-1. **12A:** ~~remove outright, or replace?~~ **resolved** — remove outright.
-2. **12B:** confirm (or adjust) the proposed `log_level` string →
-   `OLLAMA_DEBUG` numeric mapping table.
-3. **12C:** ~~confirm "2 most recent" semantics~~ **resolved** — per-stream,
-   live file + 2 most recent rotations, rotation count configurable. Still
-   open: config-file field (option a, default) vs. a `--keep=N` flag
-   (option b) for making that count configurable.
+All three resolved — see 12A, 12B, and 12C above for the reasoning behind
+each. Summary:
+
+1. **12A:** remove `gpu_percent` outright, no replacement.
+2. **12B:** replace `log_level` (string) with `debug` (bool) on
+   `OllamaTool`, mirroring `OLLAMA_DEBUG`'s actual sole documented use
+   (`OLLAMA_DEBUG=1`) exactly, not an invented multi-tier enum.
+3. **12C:** per-stream, live file + 2 most recent rotations by default,
+   configurable via a `--keep=N` flag on `logs` (not a config-file field —
+   works over SSH regardless of where the config lives).
+
+Ready to implement on confirmation.

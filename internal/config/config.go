@@ -54,8 +54,13 @@ type OllamaTool struct {
 	ModelsDir      string `json:"models_dir"`
 	KeepAlive      int    `json:"keep_alive"`
 	FlashAttention bool   `json:"flash_attention"`
-	GPUPercent     int    `json:"gpu_percent"`
-	LogLevel       string `json:"log_level"`
+	// Debug maps directly onto OLLAMA_DEBUG — Ollama's actual, sole
+	// documented verbosity switch (docs/troubleshooting.mdx: "OLLAMA_DEBUG=1"),
+	// a plain on/off. Not a level enum — Ollama doesn't have one; a prior
+	// "log_level" string field here implied a multi-tier system Ollama never
+	// recognized (found alongside a similarly fabricated GPUPercent/
+	// OLLAMA_GPU_PERCENT, removed entirely — see PHASE_12_PLAN.md).
+	Debug bool `json:"debug"`
 }
 
 type RapidMLXTool struct {

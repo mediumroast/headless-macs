@@ -147,11 +147,13 @@ Output uses the same `[SET]`/`[SKIP]`/`[WARN]`/`[PASS]`/`[FAIL]` prefix conventi
 `headless-macs-debug` is a small, separate binary for pulling logs off a node without needing the full TUI — installed alongside `headless-macs` itself, not a subcommand of it. Install/update it via `x` in the TUI sidebar or `sudo headless-macs debug-tools`.
 
 ```bash
-sudo headless-macs-debug logs          # rotate + bundle every managed tool's logs
-sudo headless-macs-debug logs ollama   # same, narrowed to one tool (ollama, rapid-mlx, mlx-lm, infinity, exo, macmon)
+sudo headless-macs-debug logs                 # rotate + bundle every managed tool's logs
+sudo headless-macs-debug logs ollama          # same, narrowed to one tool (ollama, rapid-mlx, mlx-lm, infinity, exo, macmon)
+sudo headless-macs-debug logs ollama --keep=5 # keep more rotation history per stream (default 2)
+sudo headless-macs-debug clean                # delete every bundle under bundles/, freeing the space they use
 ```
 
-Each run forces an out-of-cycle rotation using the same shared `logrotate` config `install-tools` already writes (nothing new to configure), then bundles the result into a timestamped `tar.gz` under `/var/log/mac-llm-setup/bundles/` and prints its path. Pulling it off the box is a plain `scp` — this tool never pushes anywhere itself.
+Each run forces an out-of-cycle rotation using the same shared `logrotate` config `install-tools` already writes (nothing new to configure), then bundles the result into a timestamped `tar.gz` under `/var/log/mac-llm-setup/bundles/` and prints its path. Pulling it off the box is a plain `scp` — this tool never pushes anywhere itself. Only the live log file plus its `--keep` (default 2) most recent rotations are bundled per stream (stdout/stderr) — not each tool's entire rotation history, and not headless-macs's own operational logs under `/var/log/mac-llm-setup/` (an earlier version bundled both, producing bundles far larger than the actual source logs). `clean` is a plain, non-interactive delete — no confirmation prompt, no automatic retention policy; it removes everything under `bundles/` every time it's run.
 
 > **Testing status:** the full flow — rotate, bundle, sudo NOPASSWD over non-interactive SSH, `scp` off the box — is live-verified end to end for `ollama` only. The other five tools' log directories (`rapid-mlx`, `mlx-lm`, `infinity`, `exo`, `macmon`) are structurally identical, but haven't been exercised live since they aren't enabled on the boxes this was tested on. Treat those as untested, not broken, until confirmed.
 

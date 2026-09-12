@@ -331,17 +331,9 @@ func (r *ToolsResult) installOllama(cfg *config.Config, localhostOnly bool) {
 	if cfg.Tools.Ollama.KeepAlive == 0 {
 		keepAlive = "-1"
 	}
-	gpuPct := fmt.Sprintf("%d", cfg.Tools.Ollama.GPUPercent)
-	if cfg.Tools.Ollama.GPUPercent == 0 {
-		gpuPct = "100"
-	}
 	flashAttn := "0"
 	if cfg.Tools.Ollama.FlashAttention {
 		flashAttn = "1"
-	}
-	logLevel := cfg.Tools.Ollama.LogLevel
-	if logLevel == "" {
-		logLevel = "warn"
 	}
 
 	ctxDisplay := maxCtx
@@ -354,7 +346,7 @@ func (r *ToolsResult) installOllama(cfg *config.Config, localhostOnly bool) {
 	plistPath := "/Library/LaunchDaemons/com.ollama.server.plist"
 	plistContent := ollamaPlist(ollamaBin, host, ollamaModelsEnv, llmserverHome, keepAlive,
 		fmt.Sprintf("%d", numPar), fmt.Sprintf("%d", maxLoaded), maxCtx,
-		flashAttn, gpuPct, logLevel, llmserverUser)
+		flashAttn, cfg.Tools.Ollama.Debug, llmserverUser)
 
 	if err := os.WriteFile(plistPath, []byte(plistContent), 0644); err != nil {
 		r.add(section, ActionFail, "Could not write Ollama plist: "+err.Error(), "")
@@ -442,10 +434,19 @@ func ollamaAutoTune(ramGB int) (maxLoaded, numPar int, maxCtx string) {
 	}
 }
 
-func ollamaPlist(bin, host, modelsDir, home, keepAlive, numPar, maxLoaded, maxCtx, flashAttn, gpuPct, logLevel, user string) string {
+func ollamaPlist(bin, host, modelsDir, home, keepAlive, numPar, maxLoaded, maxCtx, flashAttn string, debug bool, user string) string {
 	maxCtxKey := ""
 	if maxCtx != "" {
 		maxCtxKey = fmt.Sprintf("    <key>OLLAMA_MAX_CONTEXT</key><string>%s</string>\n", maxCtx)
+	}
+	// OLLAMA_DEBUG is Ollama's actual, sole documented verbosity switch
+	// (see ollama/ollama docs/troubleshooting.mdx: "OLLAMA_DEBUG=1") — a
+	// plain on/off, not a multi-level enum. Only written when true; Ollama's
+	// own default (unset) is otherwise left alone rather than writing an
+	// explicit "0" that implies a level system that doesn't exist.
+	debugKey := ""
+	if debug {
+		debugKey = "    <key>OLLAMA_DEBUG</key><string>1</string>\n"
 	}
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -473,15 +474,13 @@ func ollamaPlist(bin, host, modelsDir, home, keepAlive, numPar, maxLoaded, maxCt
     <key>OLLAMA_MAX_LOADED_MODELS</key><string>%s</string>
 %s    <key>OLLAMA_FLASH_ATTENTION</key><string>%s</string>
     <key>OLLAMA_NUM_GPU</key><string>1</string>
-    <key>OLLAMA_GPU_PERCENT</key><string>%s</string>
-    <key>OLLAMA_LOG_LEVEL</key><string>%s</string>
-    <key>OLLAMA_ORIGINS</key><string>*</string>
+%s    <key>OLLAMA_ORIGINS</key><string>*</string>
   </dict>
   <key>WorkingDirectory</key><string>/tmp</string>
   <key>UserName</key><string>%s</string>
 </dict>
 </plist>
-`, bin, home, modelsDir, host, keepAlive, numPar, maxLoaded, maxCtxKey, flashAttn, gpuPct, logLevel, user)
+`, bin, home, modelsDir, host, keepAlive, numPar, maxLoaded, maxCtxKey, flashAttn, debugKey, user)
 }
 
 // ---------------------------------------------------------------------------

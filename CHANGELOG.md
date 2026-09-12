@@ -9,6 +9,45 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Targeted for `v2.3.1` (Patch). Includes PR [#19](https://github.com/mediumroast/headless-macs/pull/19)'s fixes, which this work builds on — see that PR for its own detail.
+
+### Fixed
+
+- **`OLLAMA_GPU_PERCENT` was a fabricated environment variable** — confirmed
+  absent from Ollama's actual current source (`envconfig/config.go` on
+  `ollama/ollama` `main`, fetched and searched directly). Ollama silently
+  ignores unrecognized environment variables, so `tools.ollama.gpu_percent`
+  in `config.json` has been doing nothing since it was added. Removed
+  outright — no real equivalent exists (the closest real setting,
+  `OLLAMA_GPU_OVERHEAD`, reserves an absolute byte count of VRAM, not a
+  percentage, and isn't a drop-in replacement).
+- **`OLLAMA_LOG_LEVEL` was also fabricated** — same source verification.
+  Ollama's actual, sole documented verbosity switch is `OLLAMA_DEBUG`
+  (confirmed against every `.mdx` doc page in the repo: the only usage
+  anywhere is `OLLAMA_DEBUG=1`, a plain boolean — not the multi-tier
+  `"warn"/"debug"/"trace"` enum the removed setting implied). `verify.go`'s
+  corresponding check only ever confirmed the (fake) key's presence in the
+  plist, never that it did anything, so it had been reporting
+  `[PASS] OLLAMA_LOG_LEVEL configured` this whole time regardless.
+  `tools.ollama.log_level` (string) is replaced with `tools.ollama.debug`
+  (bool, default `false`), mirroring Ollama's real interface exactly.
+- **`headless-macs-debug logs` bundled far more than intended** — every
+  bundle included `/var/log/mac-llm-setup` (headless-macs's own operational
+  logs, not a serving tool's — dropped entirely) and each tool's *entire*
+  rotation history (up to `logrotate`'s configured `100M x5` retention per
+  stream). Now bundles, per log stream, only the live file plus its `--keep`
+  (default `2`) most recent rotations — a CLI flag rather than a config
+  value, since this runs over SSH where the config file may not be
+  conveniently reachable.
+
+### Added
+
+- **`headless-macs-debug clean`** — deletes every bundle under
+  `/var/log/mac-llm-setup/bundles/`, freeing the space they use. No
+  confirmation prompt (matches this binary's existing scriptable,
+  non-interactive design) and no automatic retention policy yet — a
+  deliberately blunt manual "empty it out" to start.
+
 ## [2.3.0] — 2026-09-10
 
 Phase 11: fixes for issues #13–#17, plus a new debugging-tools capability.

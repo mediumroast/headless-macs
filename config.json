@@ -6,8 +6,7 @@
       "models_dir": "/Library/Ollama/models",
       "keep_alive": 86400,
       "flash_attention": true,
-      "gpu_percent": 80,
-      "log_level": "warn"
+      "debug": false
     },
     "rapid_mlx": {
       "enabled": false,

@@ -43,13 +43,9 @@ ignores any environment variable it doesn't recognize, so `gpu_percent` in
 `config.json` has been doing **nothing** — no error, no effect — since it was
 added.
 
-**Decision needed:** remove outright, or replace with the real
-`OLLAMA_GPU_OVERHEAD`? These aren't equivalent — overhead is an absolute byte
-reservation, not a percentage cap — so this isn't a drop-in rename. Defaulting
-to **remove outright** unless you want the overhead-bytes behavior instead;
-say so and I'll design that variant instead.
+**Resolved: remove outright.** No `OLLAMA_GPU_OVERHEAD` replacement.
 
-**Files touched (removal option):**
+**Files touched:**
 - `internal/ops/tools.go` — drop `gpuPct` parameter from `ollamaPlist()`, drop
   the `<key>OLLAMA_GPU_PERCENT</key>` line, drop the `gpuPct := ...` construction
   block in `installOllama()`
@@ -206,8 +202,7 @@ follow-up if the manual version proves annoying to use.
 
 ## Open questions before implementing (see each phase above for detail)
 
-1. **12A:** remove `gpu_percent` outright, or replace with real
-   `OLLAMA_GPU_OVERHEAD` (bytes, not percentage)?
+1. **12A:** ~~remove outright, or replace?~~ **resolved** — remove outright.
 2. **12B:** confirm (or adjust) the proposed `log_level` string →
    `OLLAMA_DEBUG` numeric mapping table.
 3. **12C:** ~~confirm "2 most recent" semantics~~ **resolved** — per-stream,

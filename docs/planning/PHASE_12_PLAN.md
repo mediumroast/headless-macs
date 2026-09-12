@@ -118,32 +118,49 @@ Each tool's log directory currently holds the live file(s) (`stdout.log`,
 today includes all of that, which is far more than needed for a quick "what's
 going on right now" pull.
 
-**Decision needed — what does "2 most recent" mean here?** Two reasonable
-readings, and they produce different bundles:
+**Resolved:** per stream, not per directory — the live file (`stdout.log`/
+`stderr.log`) plus its 2 most recent rotations (`.1.gz`, `.2.gz`), so 3 files
+per stream / 6 per tool. The rotation count (`2` above) must be
+**configurable**, not hardcoded.
 
-- **(a) Per stream:** for each of `stdout`/`stderr`, keep the 2 newest files
-  by mtime — typically the live file plus its most recent rotation (4 files
-  total per tool: `stdout.log` + `stdout.log.1.gz`, `stderr.log` +
-  `stderr.log.1.gz`).
-- **(b) Per directory:** keep only the 2 newest files in the whole directory,
-  full stop — in practice this usually means just the two live files
-  (`stdout.log`, `stderr.log`) and drops rotated history entirely, since
-  those are almost always the most recently modified.
+**Sub-decision needed — how should it be configurable?**
+`headless-macs-debug` is deliberately standalone (see the file's own header
+comment and `toolLogDirs`'s comment — it keeps small local copies of things
+rather than importing `internal/config`/`internal/ops`, so it stays a single
+self-contained binary). Two ways to honor "configurable" without breaking
+that:
 
-Defaulting to **(a)** — it guarantees you always get at least a little
-rotation history for both streams, which matters if a crash happened right
-at rotation time and the interesting output just rolled into `.1.gz`.
-Implementation: in `bundleDirs()`, for each top-level tool directory in
-`dirs`, list its direct children (not deep in a subtree — these are flat log
-dirs), group by the part of the filename before the first rotation suffix
-(`stdout`/`stderr`), sort each group by mtime descending, take the top 2 per
-group.
+- **(a) Read `config.json` directly, but minimally** — `headless-macs-debug`
+  parses just the one field it needs (e.g. a new `debug.log_bundle_rotations`
+  int, default `2`) out of `~/.headless_macs/config.json`, without importing
+  `internal/config`'s full struct or the `internal/ops` package. Since this
+  always runs as root (already required for rotation), it needs the same
+  "whose home directory" logic `internal/ops/baseline.go`'s `sudoUID()`
+  already has (find the invoking user via `$SUDO_UID`, not root's own home)
+  — a small, local duplicate of that one helper, matching how `toolLogDirs`
+  is already a local duplicate of `internal/ops/tools.go`'s paths. Fits the
+  project's "config-driven, no hardcoded values" principle most closely, and
+  means the TUI's Edit Config screen could expose it like any other setting.
+- **(b) A `--keep=N` flag on `logs` itself** (default `2`) — simpler,
+  no config-file parsing or sudo-user resolution needed, but the setting has
+  to be remembered and typed on every invocation rather than being a
+  standing preference, and can't be exposed in the Edit Config TUI screen.
+
+Defaulting to **(a)** to match the project's own stated config-driven
+philosophy, but this is the one with the most implementation weight of the
+three open questions, so flagging it clearly rather than assuming.
 
 **Files touched:**
 - `cmd/headless-macs-debug/main.go` — `runLogs()` (drop `opsLogDir` append),
   `bundleDirs()` (per-stream recency capping, replacing the current
   walk-everything logic for tool directories specifically — `opsLogDir`'s
-  removal above means this only ever applies to tool dirs now anyway)
+  removal above means this only ever applies to tool dirs now anyway), new
+  minimal config read + sudo-user home resolution if option (a) is chosen
+- `internal/config/config.go` / `config.json` — new `debug.log_bundle_rotations`
+  int field (default `2`) if option (a) is chosen
+- `internal/tui/config_editor.go` — expose the new field in the DEBUG section
+  if option (a) is chosen (matching how `sudo_nopasswd_enabled` is already
+  exposed there)
 
 ---
 
@@ -178,9 +195,10 @@ follow-up if the manual version proves annoying to use.
 ## Files-touched summary (all phases)
 
 - `internal/ops/tools.go` — 12A, 12B
-- `internal/config/config.go` — 12A
-- `config.json` — 12A
+- `internal/config/config.go` — 12A, 12C (if option a)
+- `config.json` — 12A, 12C (if option a)
 - `internal/ops/verify.go` — 12B
+- `internal/tui/config_editor.go` — 12C (if option a)
 - `cmd/headless-macs-debug/main.go` — 12C, 12D
 - `README.md` — 12D
 - `CHANGELOG.md` — `[Unreleased]` entries for all four, per the end-of-session
@@ -192,5 +210,7 @@ follow-up if the manual version proves annoying to use.
    `OLLAMA_GPU_OVERHEAD` (bytes, not percentage)?
 2. **12B:** confirm (or adjust) the proposed `log_level` string →
    `OLLAMA_DEBUG` numeric mapping table.
-3. **12C:** confirm "2 most recent" means per-stream (option a, the default
-   above) rather than per-directory (option b).
+3. **12C:** ~~confirm "2 most recent" semantics~~ **resolved** — per-stream,
+   live file + 2 most recent rotations, rotation count configurable. Still
+   open: config-file field (option a, default) vs. a `--keep=N` flag
+   (option b) for making that count configurable.

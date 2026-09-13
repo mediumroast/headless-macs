@@ -1,6 +1,7 @@
 # PHASE 14 PLAN — v2.3.1: config location, `--config` override, migration
 
-**Status: planning only. Nothing implemented. Stopping here per instruction.**
+**Status: plan complete, all open questions resolved. Nothing implemented
+yet.**
 
 Branch: `claude/system-config-path-fix`, created off `claude/v2.3.1-fixes`
 (PR [#20](https://github.com/mediumroast/headless-macs/pull/20), not yet
@@ -11,7 +12,8 @@ existing config handling, not a new capability; the default config
 ## Why this exists
 
 Investigating Phase 13's "does `install-tools` silently wipe a debug
-toggle" question led to `config.UserConfigPath()`
+toggle" question led to `config.UserConfigPath()` (renamed to
+`ConfigPath()` as part of this plan — see Open Questions, now resolved)
 (`internal/config/config.go:147`), which is `filepath.Join(os.UserHomeDir(),
 ".headless_macs", "config.json")`. Two things verified, not assumed:
 
@@ -68,10 +70,10 @@ depend on remembering to pass a flag.
 
 | Item | In scope | Out of scope |
 |---|---|---|
-| Change `UserConfigPath()`'s default to `/etc/headless-macs/config.json` | ✅ | Changing where anything *else* this project writes lives (logs, LaunchDaemons, model dirs) — unaffected, already fixed system paths |
+| Rename `UserConfigPath()` → `ConfigPath()`, change its default to `/etc/headless-macs/config.json` | ✅ | Changing where anything *else* this project writes lives (logs, LaunchDaemons, model dirs) — unaffected, already fixed system paths |
 | `--config <path>` override flag, all `headless-macs` subcommands + TUI | ✅ | A `--config` flag on `headless-macs-debug` — that binary doesn't read config today (Phase 12C deliberately chose a CLI flag over a config field specifically because of this same reachability problem); worth revisiting *once* the default path is fixed and trivially reachable, but that's a separate future decision, not bundled into this fix |
-| One-time migration from `~/.headless_macs/config.json` (any user) to the new system path | ✅ | Automatically deleting the old per-user file after migrating — see Open Question 2 |
-| `make install`/`make uninstall` updates | ✅ | Automatic removal of `/etc/headless-macs/config.json` on `make uninstall` — see Open Question 3 |
+| One-time migration from `~/.headless_macs/config.json` (any user) to the new system path, old file left in place afterward | ✅ | Deleting the old per-user file after migrating — resolved: leave it |
+| `make install`/`make uninstall` updates | ✅ | Automatic removal of `/etc/headless-macs/config.json` on `make uninstall` — resolved: no, config is real user data, not a build artifact |
 | Fix the file permissions (`0600`→`0644`) so a human can read their own config without `sudo` | ✅ | Making the config directly *writable* without root — it should stay root-only to write, matching every other system file this project manages |
 | Update README/CLAUDE.md's documented config path | ✅ | Rewriting historical `docs/planning/PHASE_*_PLAN.md` files that mention the old path as part of recording past decisions — those are historical records, not living docs (established convention this session) |
 
@@ -84,30 +86,33 @@ depend on remembering to pass a flag.
 ```go
 const SystemConfigPath = "/etc/headless-macs/config.json"
 
-func UserConfigPath() string {
+// ConfigPath returns the config file's location — a fixed system path,
+// not user-relative (renamed from UserConfigPath(), which stopped being
+// an accurate name the moment this changed).
+func ConfigPath() string {
     return SystemConfigPath
 }
 ```
 
-(Keeping the function name `UserConfigPath()` for now to minimize the diff
-across its several callers — see Open Question 1 on whether it should be
-renamed given it's no longer user-relative at all.)
+Renaming `UserConfigPath()` → `ConfigPath()` everywhere it's referenced
+(resolved — see Resolved Decisions below) means updating every call site's
+*name*, not just relying on the function's new behavior: `cmd/headless-macs/main.go`,
+`internal/tui/config_editor.go`, `internal/ops/storage.go`,
+`internal/ops/precheck.go`. A larger diff than leaving the name alone would
+be, but keeps every call site accurate to what it actually does.
 
 `bootstrapTo()`/`saveTo()`: directory `os.MkdirAll(filepath.Dir(dest), 0o755)`,
 file `os.WriteFile(dest, data, 0o644)` — root-writable, world-readable.
 
-**Files touched:** `internal/config/config.go` only for this part —
-every caller (`cmd/headless-macs/main.go`, `internal/tui/config_editor.go`,
-`internal/ops/storage.go`, `internal/ops/precheck.go`) already goes through
-`UserConfigPath()`/`Load()`/`Save()`/`Bootstrap()`, so none of them need to
-change for the path itself to move.
+**Files touched:** `internal/config/config.go`, plus the rename ripples
+into every caller named above (mechanical, not behavioral, changes there).
 
 ---
 
 ## Phase 14B — `--config <path>` override
 
 Proposed mechanism: a settable package-level override in `internal/config`
-(e.g. `config.OverridePath string`), checked first by `UserConfigPath()`
+(e.g. `config.OverridePath string`), checked first by `ConfigPath()`
 before falling back to `SystemConfigPath`. `cmd/headless-macs/main.go`
 scans `os.Args` for `--config=<path>` or `--config <path>` *anywhere* in
 the arguments (matching the same "anywhere, not just position 0" pattern
@@ -121,10 +126,10 @@ signatures would ripple through every existing call site for something
 that's an edge-case override, not the common path.
 
 **Files touched:** `internal/config/config.go` (the override var + its
-check in `UserConfigPath()`), `cmd/headless-macs/main.go` (arg scanning,
+check in `ConfigPath()`), `cmd/headless-macs/main.go` (arg scanning,
 usage text), `internal/tui/config_editor.go`'s footer display of the
-config path (already calls `UserConfigPath()`, so it picks up an override
-automatically — just confirming no separate change needed there).
+config path (already calls `ConfigPath()` post-rename, so it picks up an
+override automatically — just confirming no separate change needed there).
 
 ---
 
@@ -150,7 +155,11 @@ func migrateOrBootstrap(templatePath string) error {
         old := filepath.Join(home, ".headless_macs", "config.json")
         if data, err := os.ReadFile(old); err == nil {
             fmt.Println("Migrating config from", old, "to", SystemConfigPath)
-            return saveRaw(SystemConfigPath, data) // preserves the existing file's content exactly, not a re-marshal
+            // The old file is deliberately left in place, not removed —
+            // resolved: reversible-by-default over avoiding an inert
+            // duplicate. saveRaw preserves its content exactly (not a
+            // re-marshal) as the copy at the new location.
+            return saveRaw(SystemConfigPath, data)
         }
     }
     return Bootstrap(templatePath)
@@ -174,8 +183,8 @@ executes under the new version — the operator doesn't need to do anything.
   used for the `headless-macs-debug` NOPASSWD note) pointing at the new
   path, so `install` isn't silent about a location change existing
   installs will notice.
-- `make uninstall`: see Open Question 3 — whether it should ever touch
-  `/etc/headless-macs/` at all.
+- `make uninstall`: resolved — never touches `/etc/headless-macs/`. Config
+  is real user data, not a build artifact; `uninstall` stays binaries-only.
 - `README.md`: update all three references (Quick Start comment, Tool
   Selection section's "editing `~/.headless_macs/config.json` directly"
   claim — now actually true, since the file becomes world-readable and
@@ -189,32 +198,24 @@ executes under the new version — the operator doesn't need to do anything.
 
 ---
 
-## Open questions
+## Resolved decisions
 
-1. **Should `UserConfigPath()` be renamed**, now that it's not user-relative
-   at all (e.g. `ConfigPath()`)? Keeps every call site accurate to what it
-   actually does, at the cost of a slightly larger diff (every caller's
-   name, not just its behavior, would change) for a purely cosmetic
-   improvement. Leaning toward renaming for clarity, but it's your call
-   given it touches more files for no functional reason.
-2. **Should the old `~/.headless_macs/config.json` be deleted after a
-   successful migration, or left in place?** Leaving it is safer (no data
-   loss if migration somehow picked the wrong file, or if a human wants to
-   compare/verify), but means two copies exist afterward, one of them
-   inert — potentially confusing if someone stumbles on it later and
-   assumes it's still authoritative. Leaning toward **leaving it**, since
-   this project's own stated design goal is being reversible and
-   non-destructive by default, but flagging rather than deciding.
+All three open questions are now resolved with the user; this plan is
+complete and ready to implement.
+
+1. **Rename `UserConfigPath()` → `ConfigPath()`.** Yes — every call site
+   should reflect what the function actually does now that it's not
+   user-relative at all, even at the cost of a larger (mechanical, not
+   behavioral) diff.
+2. **Delete the old `~/.headless_macs/config.json` after migration, or
+   leave it?** Leave it in place — matches this project's reversible-
+   and non-destructive-by-default philosophy over avoiding an inert
+   duplicate file.
 3. **Should `make uninstall` ever remove `/etc/headless-macs/config.json`?**
-   This is real user configuration — tuned settings, not a build artifact.
-   `make uninstall` today only removes the two installed binaries; leaving
-   config alone matches that scope and this project's broader philosophy
-   (`headless-macs restore` — a separate, explicit, deliberate action — is
-   what undoes *system state*; `uninstall` removing config too would blur
-   that line and risks a surprise data loss for anyone who reinstalls
-   later expecting their settings to still be there). Recommending
-   **no** — `uninstall` stays binaries-only — but flagging since it's a
-   real design choice, not a technical constraint.
+   No. It's real user configuration, not a build artifact — `uninstall`
+   stays binaries-only, matching its existing scope; `headless-macs
+   restore` remains the separate, explicit, deliberate action that undoes
+   system state.
 
 ---
 

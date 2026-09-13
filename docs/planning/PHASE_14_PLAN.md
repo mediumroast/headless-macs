@@ -25,16 +25,17 @@ toggle" question led to `config.UserConfigPath()`
    under that default, `$HOME` during the process would be root's home
    (`/var/root`), not the actual operator's.
 
-Live-tested on doppio-2: `sudo sh -c 'echo $HOME'` came back
-`/Users/mihay42` — this box's actual sudo configuration preserves `HOME`,
-so nothing is broken *today*. But that's this box's configuration, not
-anything this project controls or can guarantee holds on every box, every
-macOS version, or after any future sudoers change. Relying on
-externally-configured shell behavior for "where is my config" is fragile
-by construction even when it currently works.
+Live-tested on doppio-2: `sudo sh -c 'echo $HOME'` came back the
+operator's own home directory (e.g. `/Users/<operator>`), not root's — this
+box's actual sudo configuration preserves `HOME`, so nothing is broken
+*today*. But that's this box's configuration, not anything this project
+controls or can guarantee holds on every box, every macOS version, or
+after any future sudoers change. Relying on externally-configured shell
+behavior for "where is my config" is fragile by construction even when it
+currently works.
 
 **A second, independent finding from the same diagnostic:**
-`ls -la ~mihay42/.headless_macs/config.json` came back **Permission
+`ls -la ~<operator>/.headless_macs/config.json` came back **Permission
 denied** — for the user's own file. Root cause, confirmed in
 `bootstrapTo()`/`saveTo()`: the file is written mode `0o600` inside a
 `0o700` directory, and since every write happens while running as root

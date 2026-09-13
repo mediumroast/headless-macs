@@ -101,3 +101,166 @@ func TestRunMark_MissingLogFile(t *testing.T) {
 		t.Error("expected an error when the log files don't exist")
 	}
 }
+
+func TestExtractIntFlag(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		want    int
+		wantSet []string
+		wantErr bool
+	}{
+		{
+			name:    "tool then equals form (the exact case that was broken)",
+			args:    []string{"ollama", "--keep=5"},
+			want:    5,
+			wantSet: []string{"ollama"},
+		},
+		{
+			name:    "equals form then tool",
+			args:    []string{"--keep=5", "ollama"},
+			want:    5,
+			wantSet: []string{"ollama"},
+		},
+		{
+			name:    "space form",
+			args:    []string{"ollama", "--keep", "7"},
+			want:    7,
+			wantSet: []string{"ollama"},
+		},
+		{
+			name:    "no flag at all uses default",
+			args:    []string{"ollama"},
+			want:    2,
+			wantSet: []string{"ollama"},
+		},
+		{
+			name:    "no tool, just the flag",
+			args:    []string{"--keep=3"},
+			want:    3,
+			wantSet: []string{},
+		},
+		{
+			name:    "invalid value",
+			args:    []string{"ollama", "--keep=nope"},
+			wantErr: true,
+		},
+		{
+			name:    "space form missing value",
+			args:    []string{"ollama", "--keep"},
+			wantErr: true,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, rest, err := extractIntFlag(c.args, "keep", 2)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("expected an error, got value=%d rest=%v", got, rest)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != c.want {
+				t.Errorf("value = %d, want %d", got, c.want)
+			}
+			if len(rest) != len(c.wantSet) {
+				t.Errorf("rest = %v, want %v", rest, c.wantSet)
+			} else {
+				for i := range rest {
+					if rest[i] != c.wantSet[i] {
+						t.Errorf("rest = %v, want %v", rest, c.wantSet)
+						break
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestExtractBoolFlag(t *testing.T) {
+	cases := []struct {
+		name       string
+		args       []string
+		flag       string
+		wantFound  bool
+		wantRemain []string
+	}{
+		{
+			name:       "tool then flag (the exact case that was broken for mark)",
+			args:       []string{"ollama", "--start"},
+			flag:       "start",
+			wantFound:  true,
+			wantRemain: []string{"ollama"},
+		},
+		{
+			name:       "flag then tool",
+			args:       []string{"--start", "ollama"},
+			flag:       "start",
+			wantFound:  true,
+			wantRemain: []string{"ollama"},
+		},
+		{
+			name:       "flag absent",
+			args:       []string{"ollama"},
+			flag:       "start",
+			wantFound:  false,
+			wantRemain: []string{"ollama"},
+		},
+		{
+			name:       "different flag not matched",
+			args:       []string{"ollama", "--stop"},
+			flag:       "start",
+			wantFound:  false,
+			wantRemain: []string{"ollama", "--stop"},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			found, rest := extractBoolFlag(c.args, c.flag)
+			if found != c.wantFound {
+				t.Errorf("found = %v, want %v", found, c.wantFound)
+			}
+			if len(rest) != len(c.wantRemain) {
+				t.Errorf("rest = %v, want %v", rest, c.wantRemain)
+				return
+			}
+			for i := range rest {
+				if rest[i] != c.wantRemain[i] {
+					t.Errorf("rest = %v, want %v", rest, c.wantRemain)
+					break
+				}
+			}
+		})
+	}
+}
+
+func TestMarkArgParsing_BothOrders(t *testing.T) {
+	// End-to-end regression for the exact bug reported live: `mark ollama
+	// --start` (tool-name-then-flag, the documented and natural order)
+	// must actually recognize --start, not silently leave both start and
+	// stop false the way flag.Parse() did.
+	for _, args := range [][]string{
+		{"ollama", "--start"},
+		{"--start", "ollama"},
+	} {
+		start, rest := extractBoolFlag(args, "start")
+		stop, rest := extractBoolFlag(rest, "stop")
+		if !start {
+			t.Errorf("args=%v: expected start=true", args)
+		}
+		if stop {
+			t.Errorf("args=%v: expected stop=false", args)
+		}
+		if start == stop {
+			t.Errorf("args=%v: start and stop should not be equal here", args)
+		}
+		if len(rest) != 1 || rest[0] != "ollama" {
+			t.Errorf("args=%v: rest = %v, want [ollama]", args, rest)
+		}
+	}
+}

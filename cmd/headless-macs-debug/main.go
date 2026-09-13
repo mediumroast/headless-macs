@@ -15,13 +15,13 @@ package main
 import (
 	"archive/tar"
 	"compress/gzip"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -101,23 +101,20 @@ func main() {
 
 	switch args[0] {
 	case "logs":
-		fs := flag.NewFlagSet("logs", flag.ExitOnError)
-		// Without this, -h/--help (which flag registers automatically) or
-		// an unknown flag prints Go's own bare auto-generated usage for
-		// just this FlagSet's one flag, not this binary's actual usage
-		// text — a different, less helpful message than everywhere else.
-		fs.Usage = func() { fmt.Print(usage) }
-		keep := fs.Int("keep", 2, "most recent rotations to bundle per log stream, in addition to the live file")
-		_ = fs.Parse(args[1:])
-		tool := ""
-		if fs.NArg() > 0 {
-			tool = fs.Arg(0)
+		keep, rest, err := extractIntFlag(args[1:], "keep", 2)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR:", err)
+			os.Exit(1)
 		}
-		if *keep < 0 {
+		tool := ""
+		if len(rest) > 0 {
+			tool = rest[0]
+		}
+		if keep < 0 {
 			fmt.Fprintln(os.Stderr, "ERROR: --keep cannot be negative")
 			os.Exit(1)
 		}
-		if err := runLogs(tool, *keep); err != nil {
+		if err := runLogs(tool, keep); err != nil {
 			fmt.Fprintln(os.Stderr, "ERROR:", err)
 			os.Exit(1)
 		}
@@ -130,6 +127,50 @@ func main() {
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n%s", args[0], usage)
 		os.Exit(1)
 	}
+}
+
+// extractIntFlag scans args for --name=value or --name value anywhere in
+// the list — not just before the first positional argument — and returns
+// the parsed value plus args with that flag (and its value) removed.
+//
+// Go's stdlib flag package stops parsing at the *first* non-flag token,
+// so `flag.Parse()` on ["ollama", "--keep=5"] never sees --keep at all:
+// "ollama" halts parsing immediately, and both "ollama" and "--keep=5"
+// end up as positional args instead. That's not a hypothetical — it's
+// exactly why the previously-documented `logs ollama --keep=5` silently
+// used the default 2 instead of 5, tool-name-then-flag being the natural
+// order to type and document. Scanning manually, like extractConfigFlag
+// already does for the main headless-macs binary's --config, sidesteps
+// stdlib flag's position sensitivity entirely.
+func extractIntFlag(args []string, name string, def int) (value int, rest []string, err error) {
+	value = def
+	prefix := "--" + name + "="
+	bare := "--" + name
+	rest = make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case strings.HasPrefix(a, prefix):
+			v, convErr := strconv.Atoi(strings.TrimPrefix(a, prefix))
+			if convErr != nil {
+				return 0, nil, fmt.Errorf("invalid --%s value %q", name, strings.TrimPrefix(a, prefix))
+			}
+			value = v
+		case a == bare:
+			if i+1 >= len(args) {
+				return 0, nil, fmt.Errorf("--%s requires a value", name)
+			}
+			v, convErr := strconv.Atoi(args[i+1])
+			if convErr != nil {
+				return 0, nil, fmt.Errorf("invalid --%s value %q", name, args[i+1])
+			}
+			value = v
+			i++
+		default:
+			rest = append(rest, a)
+		}
+	}
+	return value, rest, nil
 }
 
 func runLogs(tool string, keep int) error {

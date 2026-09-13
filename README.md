@@ -31,7 +31,7 @@ cd headless-macs
 # 2. Build the binary
 go build -o headless-macs ./cmd/headless-macs
 
-# 3a. Interactive TUI — first launch copies config.json to ~/.headless_macs/config.json
+# 3a. Interactive TUI — first launch copies config.json to /etc/headless-macs/config.json
 sudo ./headless-macs
 
 # 3b. Or non-interactively (headless/SSH/cron)
@@ -117,7 +117,7 @@ Every TUI function except Edit Config is available as a subcommand for scripting
 | `x` | Debugging Tools | `debug-tools` |
 | `c` | Edit Config | *(none — edit `config.json` directly, or use the TUI)* |
 
-Besides `status --watch`, no subcommand takes any flags beyond the global `--help`/`--version` — nothing here is configurable from the command line itself:
+Besides `status --watch`, no subcommand takes any flags beyond the global `--help`/`--version`/`--config` — nothing here is configurable from the command line itself:
 
 ```bash
 sudo headless-macs precheck        # Read-only audit — no changes
@@ -130,9 +130,12 @@ sudo headless-macs restore         # Undo everything
 sudo headless-macs status          # What's running and what it's costing you
 sudo headless-macs status --watch  # Same, refreshing in place (same interval as the TUI Dashboard)
 
-sudo headless-macs --help          # Show all commands and options
-sudo headless-macs --version       # Print version and exit
+sudo headless-macs --help                        # Show all commands and options
+sudo headless-macs --version                     # Print version and exit
+sudo headless-macs --config /path/to/config.json verify  # Use an alternate config file for one invocation
 ```
+
+`--config` works anywhere in the argument list, with any subcommand (or none, for the TUI) — it overrides the default `/etc/headless-macs/config.json` for that one invocation only; it's not a standing setting.
 
 Every CLI invocation also prints a one-line `[INFO]` to stderr if this
 box was last configured by a different version of the binary than the one
@@ -196,7 +199,7 @@ scp "user@host:$BUNDLE" .
 | **Exo** | Multi-Mac distributed inference | 52415 | Pools unified memory across devices. Requires auto-login. |
 | **macmon** | Hardware telemetry (not inference) | 9090 | CPU/GPU/ANE power, temp, memory over HTTP. `GET /json`, `/metrics` (Prometheus). Disabled by default. |
 
-Enable tools through the **Edit Config** screen (`c` from the menu), or by editing `~/.headless_macs/config.json` directly:
+Enable tools through the **Edit Config** screen (`c` from the menu), or by editing `/etc/headless-macs/config.json` directly (root-writable, world-readable — see `--config` below for pointing at an alternate file):
 
 ```json
 {
@@ -268,7 +271,7 @@ headless-macs/
 │   ├── ops/                   # All system operations (precheck, baseline, tools, etc.)
 │   ├── tui/                   # Bubble Tea TUI (menu, screens, styles)
 │   └── log/                   # Structured log writer
-├── config.json                # Config template (copied to ~/.headless_macs/ on first run)
+├── config.json                # Config template (copied to /etc/headless-macs/ on first run)
 ├── modelfiles/
 │   ├── qwen3-coder-next-256k-agent.modelfile  # Agent: low temp, tool rules
 │   ├── qwen3-coder-next-256k.modelfile        # Chat: higher temp

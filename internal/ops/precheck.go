@@ -639,7 +639,7 @@ var renamedConfigKeys = map[string]string{
 // removed field (see renamedConfigKeys) sits in an operator's config file
 // forever, doing nothing, with no indication anything is wrong.
 func (r *PrecheckResult) checkConfigKeys() {
-	data, err := os.ReadFile(config.UserConfigPath())
+	data, err := os.ReadFile(config.ConfigPath())
 	if err != nil {
 		return // no user config yet — nothing to check
 	}

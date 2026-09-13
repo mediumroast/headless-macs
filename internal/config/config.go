@@ -1,11 +1,13 @@
 // Package config loads and saves headless-macs configuration.
-// The active config lives at ~/.headless_macs/config.json.
-// The repo config.json is the shipped template and is never modified.
+// The active config lives at SystemConfigPath (/etc/headless-macs/config.json)
+// unless overridden with --config. The repo config.json is the shipped
+// template and is never modified.
 package config
 
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -143,25 +145,96 @@ type Network struct {
 	DisableFirewall bool `json:"disable_firewall"`
 }
 
-// UserConfigPath returns ~/.headless_macs/config.json.
-func UserConfigPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".headless_macs", "config.json")
+// SystemConfigPath is the fixed, system-wide location of the active
+// config. Deliberately not user-relative: every headless-macs invocation
+// requires root (via sudo), and $HOME under sudo is governed entirely by
+// that box's own sudoers configuration (env_reset's documented default
+// actually initializes HOME from the *target* user, i.e. root, not the
+// invoker) — not anything this project controls or can guarantee holds
+// on every box. A fixed system path matches how this project already
+// treats everything else it manages (/var/log/mac-llm-setup,
+// /Library/LaunchDaemons, /Library/LLMServer). See PHASE_14_PLAN.md.
+// var, not const, so tests can override it without touching the real
+// /etc/headless-macs — real usage never assigns to it.
+var SystemConfigPath = "/etc/headless-macs/config.json"
+
+// legacyConfigPath is the old, pre-Phase-14 per-invoking-user location —
+// consulted only once, by migrateOrBootstrap, to carry an existing
+// installation's config forward. Not used for anything else: if
+// os.UserHomeDir() happens to resolve wrong on some box, the only
+// consequence is a fresh bootstrap from the template, identical to a
+// brand-new install — never silent corruption or a worse outcome.
+func legacyConfigPath() (string, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", false
+	}
+	return filepath.Join(home, ".headless_macs", "config.json"), true
+}
+
+// OverridePath, when set, takes precedence over SystemConfigPath —
+// set by cmd/headless-macs/main.go when --config <path> is passed.
+var OverridePath string
+
+// ConfigPath returns the active config file's location: OverridePath if
+// set via --config, otherwise the fixed system path. Renamed from
+// UserConfigPath(), which stopped being an accurate name the moment the
+// default stopped being user-relative.
+func ConfigPath() string {
+	if OverridePath != "" {
+		return OverridePath
+	}
+	return SystemConfigPath
 }
 
 // Load reads the user config. If it does not exist, returns ErrNotFound
 // so the caller can trigger the first-run bootstrap.
 var ErrNotFound = os.ErrNotExist
 
-// Load reads and parses the user config file.
+// Load reads and parses the active config file.
 func Load() (*Config, error) {
-	return loadFrom(UserConfigPath())
+	return loadFrom(ConfigPath())
 }
 
-// Bootstrap copies the template config to the user config location.
-// templatePath is the path to the repo's config.json.
+// Bootstrap copies the template config to the active config location.
+// templatePath is the path to the repo's config.json. Callers should
+// generally prefer MigrateOrBootstrap, which also carries an existing
+// pre-Phase-14 config forward instead of starting fresh.
 func Bootstrap(templatePath string) error {
-	return bootstrapTo(templatePath, UserConfigPath())
+	return bootstrapTo(templatePath, ConfigPath())
+}
+
+// MigrateOrBootstrap is what a first-run should actually call: if the
+// active config path (ConfigPath()) already exists, it's a no-op. If not,
+// and an old-style per-user config exists at legacyConfigPath(), that
+// file's exact bytes are copied to the new location (left in place at the
+// old path too — reversible-by-default, not deleted) rather than
+// discarding an existing installation's tuned settings. Only falls back
+// to Bootstrap (fresh from the template) if neither exists, or if
+// OverridePath is set (an explicit --config target is never migrated
+// into implicitly).
+//
+// The returned bool is true only for a genuine fresh-from-template
+// bootstrap — never for a migration, which carries a real, already-tuned
+// installation forward and must not be treated as a blank-slate first run
+// (e.g. routed into the TUI's first-run onboarding screen).
+func MigrateOrBootstrap(templatePath string) (freshBootstrap bool, err error) {
+	dest := ConfigPath()
+	if _, statErr := os.Stat(dest); statErr == nil {
+		return false, nil // already in place
+	}
+	if OverridePath == "" {
+		if old, ok := legacyConfigPath(); ok {
+			if data, readErr := os.ReadFile(old); readErr == nil {
+				fmt.Printf("Migrating config from %s to %s\n", old, dest)
+				return false, saveRawBytes(dest, data)
+			}
+		}
+	}
+	if templatePath == "" {
+		return false, fmt.Errorf("config not found and no template available")
+	}
+	return true, Bootstrap(templatePath)
 }
 
 func bootstrapTo(src, dest string) error {
@@ -169,10 +242,18 @@ func bootstrapTo(src, dest string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
+	return saveRawBytes(dest, data)
+}
+
+// saveRawBytes writes data to dest verbatim (no JSON re-marshaling) —
+// shared by bootstrapTo (copying the template) and MigrateOrBootstrap
+// (copying an existing config's exact bytes forward, not a reformatted
+// re-save of it).
+func saveRawBytes(dest string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(dest, data, 0o600)
+	return os.WriteFile(dest, data, 0o644)
 }
 
 func loadFrom(path string) (*Config, error) {
@@ -194,10 +275,10 @@ func loadFrom(path string) (*Config, error) {
 	// when the only difference is formatting (field order, whitespace) —
 	// this just re-normalizes the file in that case too. See issue #13.
 	//
-	// Writes back to `path` specifically, not UserConfigPath() via
-	// Save() — loadFrom is also used in tests with an arbitrary temp
-	// path, and writing to the real user config as a side effect of
-	// loading a different file would be a bug in its own right.
+	// Writes back to `path` specifically, not ConfigPath() via Save() —
+	// loadFrom is also used in tests with an arbitrary temp path, and
+	// writing to the real active config as a side effect of loading a
+	// different file would be a bug in its own right.
 	if patched, err := json.MarshalIndent(&c, "", "  "); err == nil {
 		if !bytes.Equal(bytes.TrimSpace(data), bytes.TrimSpace(patched)) {
 			_ = saveTo(path, &c)
@@ -207,22 +288,27 @@ func loadFrom(path string) (*Config, error) {
 	return &c, nil
 }
 
-// Save writes the config back to the user config file atomically.
+// Save writes the config back to the active config file atomically.
 func Save(c *Config) error {
-	return saveTo(UserConfigPath(), c)
+	return saveTo(ConfigPath(), c)
 }
 
 // saveTo writes c to dest atomically (write to a .tmp file, then rename).
-// Shared by Save() (always UserConfigPath()) and loadFrom()'s
-// auto-migrate step (whatever path it was given, which is UserConfigPath()
-// in real usage but may be a test's temp file).
+// Shared by Save() (always ConfigPath()) and loadFrom()'s auto-migrate
+// step (whatever path it was given, which is ConfigPath() in real usage
+// but may be a test's temp file). Mode 0o644, not 0o600: every write
+// happens while running as root (headless-macs always requires sudo), so
+// a root-only-readable file would be unreadable to the actual human
+// operator without another sudo — confirmed as a real, live bug at the
+// old per-user location. World-readable/root-writable matches how this
+// project already treats e.g. the sudoers drop-in.
 func saveTo(dest string, c *Config) error {
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
 	tmp := dest + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
 	return os.Rename(tmp, dest)

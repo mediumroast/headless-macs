@@ -9,7 +9,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Targeted for `v2.3.1` (Patch). Includes PR [#19](https://github.com/mediumroast/headless-macs/pull/19)'s fixes, which this work builds on — see that PR for its own detail.
+Targeted for `v2.3.1` (Patch). Includes PRs [#19](https://github.com/mediumroast/headless-macs/pull/19) and [#20](https://github.com/mediumroast/headless-macs/pull/20)'s fixes, which this work builds on — see those PRs for their own detail.
 
 ### Fixed
 
@@ -39,6 +39,22 @@ Targeted for `v2.3.1` (Patch). Includes PR [#19](https://github.com/mediumroast/
   (default `2`) most recent rotations — a CLI flag rather than a config
   value, since this runs over SSH where the config file may not be
   conveniently reachable.
+- **Config location depended on `$HOME` under `sudo`, which every
+  invocation requires and which is not guaranteed to preserve the
+  invoking user's home** — verified against both Go's `os.UserHomeDir()`
+  source (exactly `$HOME`, no fallback) and `sudo`'s own documented
+  default (`env_reset`, the standard default, initializes `HOME` from the
+  *target* user, not the invoker). Moved the config's default location to
+  a fixed system path, `/etc/headless-macs/config.json`, matching how
+  this project already treats everything else it manages
+  (`/var/log/mac-llm-setup`, `/Library/LaunchDaemons`). An existing
+  install's config at the old `~/.headless_macs/config.json` location is
+  migrated automatically and left in place, not deleted. Also fixes an
+  independent, already-real bug found via the same investigation: the
+  config file was written mode `0600` while running as root, making it
+  unreadable to the actual human operator without another `sudo` —
+  contradicting README's own claim that it could be edited directly. Now
+  `0644`.
 
 ### Added
 
@@ -47,6 +63,9 @@ Targeted for `v2.3.1` (Patch). Includes PR [#19](https://github.com/mediumroast/
   confirmation prompt (matches this binary's existing scriptable,
   non-interactive design) and no automatic retention policy yet — a
   deliberately blunt manual "empty it out" to start.
+- **`--config <path>`** on `headless-macs` — overrides the default config
+  location for one invocation; works anywhere in the argument list, with
+  any subcommand or the TUI.
 
 ## [2.3.0] — 2026-09-10
 

@@ -48,6 +48,9 @@ install: build
 	@echo "Note: passwordless sudo for $(DEBUG_BINARY) is opt-in, not part of"
 	@echo "this install — enable it in Edit Config (DEBUG section), then run"
 	@echo "'sudo headless-macs debug-tools' to apply it."
+	@echo "Note: config now lives at /etc/headless-macs/config.json (not"
+	@echo "~/.headless_macs/) — an existing config there is migrated"
+	@echo "automatically the first time $(BINARY) runs; nothing to do here."
 
 # Reverses install: — removes both binaries. Does NOT touch config, model
 # data, LaunchDaemons, log directories, or the sudoers drop-in — those are

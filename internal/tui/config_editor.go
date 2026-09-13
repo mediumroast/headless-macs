@@ -338,7 +338,7 @@ func (m ConfigEditorModel) Body() string {
 		b.WriteByte('\n')
 	}
 
-	cfgPath := config.UserConfigPath()
+	cfgPath := config.ConfigPath()
 	var stateStr string
 	switch {
 	case m.saveErr != "":

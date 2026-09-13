@@ -77,9 +77,19 @@ binary (documented in README.md).
 
 func main() {
 	args := os.Args[1:]
-	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+	if len(args) == 0 {
 		fmt.Print(usage)
 		os.Exit(0)
+	}
+	// Checked against every arg, not just args[0], so `logs --help` and
+	// `clean --help` show this usage text too, without first hitting the
+	// root-required check below — asking for help isn't a privileged
+	// operation.
+	for _, a := range args {
+		if a == "--help" || a == "-h" {
+			fmt.Print(usage)
+			os.Exit(0)
+		}
 	}
 
 	if os.Getuid() != 0 {
@@ -92,6 +102,11 @@ func main() {
 	switch args[0] {
 	case "logs":
 		fs := flag.NewFlagSet("logs", flag.ExitOnError)
+		// Without this, -h/--help (which flag registers automatically) or
+		// an unknown flag prints Go's own bare auto-generated usage for
+		// just this FlagSet's one flag, not this binary's actual usage
+		// text — a different, less helpful message than everywhere else.
+		fs.Usage = func() { fmt.Print(usage) }
 		keep := fs.Int("keep", 2, "most recent rotations to bundle per log stream, in addition to the live file")
 		_ = fs.Parse(args[1:])
 		tool := ""

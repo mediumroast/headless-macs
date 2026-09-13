@@ -47,7 +47,7 @@ func TestRunMark_WritesToBothStreams(t *testing.T) {
 		}
 	}
 
-	if err := runMark("ollama", true); err != nil {
+	if err := runMark("ollama", true, ""); err != nil {
 		t.Fatalf("runMark: %v", err)
 	}
 
@@ -66,6 +66,27 @@ func TestRunMark_WritesToBothStreams(t *testing.T) {
 	}
 }
 
+func TestRunMark_WithMessage(t *testing.T) {
+	dir := withTestLogDir(t)
+	for _, name := range []string{"stdout.log", "stderr.log"} {
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := runMark("ollama", true, "load test run 4"); err != nil {
+		t.Fatalf("runMark: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "stdout.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "load test run 4") {
+		t.Errorf("expected message in marker line, got %q", data)
+	}
+}
+
 func TestRunMark_StopMarker(t *testing.T) {
 	dir := withTestLogDir(t)
 	for _, name := range []string{"stdout.log", "stderr.log"} {
@@ -74,7 +95,7 @@ func TestRunMark_StopMarker(t *testing.T) {
 		}
 	}
 
-	if err := runMark("ollama", false); err != nil {
+	if err := runMark("ollama", false, ""); err != nil {
 		t.Fatalf("runMark: %v", err)
 	}
 
@@ -88,7 +109,7 @@ func TestRunMark_StopMarker(t *testing.T) {
 }
 
 func TestRunMark_UnknownTool(t *testing.T) {
-	if err := runMark("bogus-tool", true); err == nil {
+	if err := runMark("bogus-tool", true, ""); err == nil {
 		t.Error("expected an error for an unknown tool")
 	}
 }
@@ -97,7 +118,7 @@ func TestRunMark_MissingLogFile(t *testing.T) {
 	// A tool directory that exists but has no log files yet (never
 	// started, or not enabled) should report a clear error, not panic.
 	withTestLogDir(t)
-	if err := runMark("ollama", true); err == nil {
+	if err := runMark("ollama", true, ""); err == nil {
 		t.Error("expected an error when the log files don't exist")
 	}
 }

@@ -62,12 +62,14 @@ scopes are actually cut. See `docs/planning/PHASE_13_PLAN.md`.
   archiving the complete session before quiet logging resumes. Currently
   supported for `ollama` only — the other tools toggle verbosity through a
   different mechanism, or have none yet.
-- **`headless-macs-debug mark <tool> --start / --stop`** — appends a
-  timestamped, grep-able marker line to a tool's `stdout.log` and
-  `stderr.log`, independent of `start`/`stop` and working for any of the
-  six managed tools. Safe to run while the daemon is actively writing to
-  the same files (POSIX-guaranteed atomic append, the same mechanism
-  `logger`(1)/syslog rely on) — confirmed, not assumed.
+- **`headless-macs-debug mark <tool> --start / --stop [message]`** —
+  appends a timestamped, grep-able marker line to a tool's `stdout.log`
+  and `stderr.log`, independent of `start`/`stop` and working for any of
+  the six managed tools. Safe to run while the daemon is actively writing
+  to the same files (POSIX-guaranteed atomic append, the same mechanism
+  `logger`(1)/syslog rely on) — confirmed, not assumed. Takes an optional
+  trailing free-text message, appended to the marker line, for telling
+  apart multiple marked runs in the same log file.
 
 ## [2.3.0] — 2026-09-10
 

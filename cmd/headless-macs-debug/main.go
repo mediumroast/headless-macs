@@ -50,7 +50,7 @@ Usage:
   sudo headless-macs-debug clean
   sudo headless-macs-debug start <tool>
   sudo headless-macs-debug stop <tool>
-  sudo headless-macs-debug mark <tool> --start | --stop
+  sudo headless-macs-debug mark <tool> --start | --stop [message]
 
 Commands:
   logs [tool]   Force a log rotation and bundle the result into a
@@ -75,12 +75,15 @@ Commands:
                 logging, restart it, and rotate the logs again so the
                 debug-session output is archived on its own. Exits with a
                 plain status code — no special output.
-  mark <tool> --start | --stop
+  mark <tool> --start | --stop [message]
                 Append a timestamped, grep-able marker line to <tool>'s
                 stdout.log and stderr.log — independent of start/stop, for
                 marking the boundary of whatever you're currently doing
                 without restarting the daemon. Works for any of: ollama,
-                rapid-mlx, mlx-lm, infinity, exo, macmon.
+                rapid-mlx, mlx-lm, infinity, exo, macmon. An optional
+                trailing message (all remaining words, space-joined) is
+                appended to the marker line, e.g.
+                'mark ollama --start load test run 4'.
 
 Must be run as root (sudo) — log rotation needs to truncate files it
 doesn't own. If you're running this over a non-interactive SSH session
@@ -166,7 +169,9 @@ func main() {
 			fmt.Fprintln(os.Stderr, "ERROR: mark requires exactly one of --start or --stop")
 			os.Exit(1)
 		}
-		if err := runMark(rest[0], start); err != nil {
+		tool := rest[0]
+		msg := strings.Join(rest[1:], " ")
+		if err := runMark(tool, start, msg); err != nil {
 			fmt.Fprintln(os.Stderr, "ERROR:", err)
 			os.Exit(1)
 		}
@@ -688,8 +693,9 @@ func lookupDebugToggle(tool string) (toolDebugToggle, error) {
 // so a second process (the daemon itself) writing at the same time can
 // never see a torn/interleaved line — the same mechanism logger(1) and
 // syslog rely on. Works for any tool in toolLogDirs, not just the ones
-// start/stop support.
-func runMark(tool string, isStart bool) error {
+// start/stop support. msg is an optional free-text note (e.g. "load test
+// run 4") appended to the marker line — empty means no note.
+func runMark(tool string, isStart bool, msg string) error {
 	dir, ok := toolLogDirs[tool]
 	if !ok {
 		return fmt.Errorf("unknown tool %q (expected one of: ollama, rapid-mlx, mlx-lm, infinity, exo, macmon)", tool)
@@ -698,7 +704,11 @@ func runMark(tool string, isStart bool) error {
 	if isStart {
 		label = "START"
 	}
-	marker := fmt.Sprintf("##### headless-macs-debug: DEBUG SESSION %s %s #####\n", label, time.Now().UTC().Format(time.RFC3339))
+	ts := time.Now().UTC().Format(time.RFC3339)
+	marker := fmt.Sprintf("##### headless-macs-debug: DEBUG SESSION %s %s #####\n", label, ts)
+	if msg != "" {
+		marker = fmt.Sprintf("##### headless-macs-debug: DEBUG SESSION %s %s — %s #####\n", label, ts, msg)
+	}
 
 	var failures []string
 	for _, name := range []string{"stdout.log", "stderr.log"} {

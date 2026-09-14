@@ -43,11 +43,12 @@ Commands (run non-interactively, output to stdout + log):
   (no command)    Launch the interactive TUI
 
 Options:
-  --help, -h      Show this help and exit
-  --version       Show version and exit
+  --help, -h        Show this help and exit
+  --version         Show version and exit
+  --config <path>   Use this config file instead of the default location
 
 Exit codes for verify: 0 = all pass, 1 = failures present, 2 = warnings only
-Config: ~/.headless_macs/config.json
+Config: /etc/headless-macs/config.json (override with --config)
 Logs:   /var/log/mac-llm-setup/
 `
 
@@ -60,7 +61,7 @@ func main() {
 	ops.Version = version
 	tui.Version = version
 
-	args := os.Args[1:]
+	args := extractConfigFlag(os.Args[1:])
 	for _, a := range args {
 		if a == "--help" || a == "-h" {
 			fmt.Print(usage)
@@ -85,6 +86,32 @@ func main() {
 	runTUI()
 }
 
+// extractConfigFlag scans args for --config <path> or --config=<path>
+// anywhere in the arguments — not just position 0, matching the same
+// "anywhere" pattern headless-macs-debug's --help fix uses, for the same
+// reason: this shouldn't depend on argument order. Sets
+// config.OverridePath if found, and returns args with the flag (and its
+// value, if given as a separate argument) removed, so subcommand dispatch
+// still sees the real command at args[0].
+func extractConfigFlag(args []string) []string {
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case strings.HasPrefix(a, "--config="):
+			config.OverridePath = strings.TrimPrefix(a, "--config=")
+		case a == "--config":
+			if i+1 < len(args) {
+				config.OverridePath = args[i+1]
+				i++
+			}
+		default:
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
 // ---------------------------------------------------------------------------
 // TUI mode
 // ---------------------------------------------------------------------------
@@ -94,19 +121,15 @@ func runTUI() {
 
 	templatePath := findTemplate()
 
-	cfgPath := config.UserConfigPath()
-	firstRun := false
-	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
-		if templatePath == "" {
-			fmt.Fprintln(os.Stderr, "ERROR: config.json template not found. Run from the headless-macs repo directory.")
-			os.Exit(1)
-		}
-		if err := config.Bootstrap(templatePath); err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: could not create config: %v\n", err)
-			os.Exit(1)
-		}
+	cfgPath := config.ConfigPath()
+	fresh, err := config.MigrateOrBootstrap(templatePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: could not create config: %v\n", err)
+		os.Exit(1)
+	}
+	firstRun := fresh
+	if fresh {
 		fmt.Printf("Created config: %s\n", cfgPath)
-		firstRun = true
 	}
 
 	cfg, err := config.Load()
@@ -366,20 +389,19 @@ func checkPlatform() {
 }
 
 func loadConfig(cmd string) (*config.Config, error) {
-	cfgPath := config.UserConfigPath()
+	cfgPath := config.ConfigPath()
 	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
 		if cmd == "restore" {
 			// restore doesn't need a config
 			return &config.Config{}, nil
 		}
-		templatePath := findTemplate()
-		if templatePath == "" {
-			return nil, fmt.Errorf("config not found and no template available — run from repo directory or run the TUI first")
-		}
-		if err := config.Bootstrap(templatePath); err != nil {
+		fresh, err := config.MigrateOrBootstrap(findTemplate())
+		if err != nil {
 			return nil, fmt.Errorf("could not create config: %w", err)
 		}
-		fmt.Printf("[INFO] Created config: %s\n", cfgPath)
+		if fresh {
+			fmt.Printf("[INFO] Created config: %s\n", cfgPath)
+		}
 	}
 	return config.Load()
 }

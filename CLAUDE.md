@@ -9,7 +9,7 @@ This file is read by Claude Code at the start of every session. It describes wha
 `headless-macs` configures Apple Silicon Macs as production-grade, unattended LLM inference nodes. The design goals are:
 
 - **Idempotent** — every operation can be run multiple times; it skips settings that are already correct.
-- **Config-driven** — one `config.json` (stored at `~/.headless_macs/config.json`) controls all operations. No hardcoded values.
+- **Config-driven** — one `config.json` (stored at `/etc/headless-macs/config.json`, overridable per-invocation with `--config <path>`) controls all operations. No hardcoded values. Not user-relative: `$HOME` under `sudo` (every invocation requires root) is governed by that box's own sudoers configuration, not anything this project controls — see `docs/planning/PHASE_14_PLAN.md`.
 - **Auditable** — Precheck (read-only) runs before anything; Verify (read-only) runs after. Changes are bracketed by audit tools.
 - **Reversible** — Restore undoes everything System Baseline and Install Tools did.
 - **Minimal surface** — the toolset does not install anything beyond what is needed for LLM inference.

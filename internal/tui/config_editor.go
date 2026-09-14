@@ -458,8 +458,7 @@ func buildFields(cfg *config.Config) []field {
 	f = append(f, strField("Models Dir", func() string { return cfg.Tools.Ollama.ModelsDir }, func(v string) { cfg.Tools.Ollama.ModelsDir = v }))
 	f = append(f, intField("Keep Alive (sec)", func() int { return cfg.Tools.Ollama.KeepAlive }, func(v int) { cfg.Tools.Ollama.KeepAlive = v }))
 	f = append(f, boolField("Flash Attention", func() bool { return cfg.Tools.Ollama.FlashAttention }, func(v bool) { cfg.Tools.Ollama.FlashAttention = v }))
-	f = append(f, intField("GPU Percent", func() int { return cfg.Tools.Ollama.GPUPercent }, func(v int) { cfg.Tools.Ollama.GPUPercent = v }))
-	f = append(f, strField("Log Level", func() string { return cfg.Tools.Ollama.LogLevel }, func(v string) { cfg.Tools.Ollama.LogLevel = v }))
+	f = append(f, boolField("Debug Logging", func() bool { return cfg.Tools.Ollama.Debug }, func(v bool) { cfg.Tools.Ollama.Debug = v }))
 
 	f = append(f, field{kind: kindToolHeader, label: "Rapid-MLX"})
 	f = append(f, boolField("Enabled", func() bool { return cfg.Tools.RapidMLX.Enabled }, func(v bool) { cfg.Tools.RapidMLX.Enabled = v }))

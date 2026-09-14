@@ -549,10 +549,22 @@ func (r *VerifyResult) sectionOllama(cfg *config.Config) {
 	// Log verbosity + symlink-bypass checks (Phase 7)
 	if plist, err := os.ReadFile("/Library/LaunchDaemons/com.ollama.server.plist"); err == nil {
 		content := string(plist)
-		if strings.Contains(content, "<key>OLLAMA_LOG_LEVEL</key>") {
-			r.pass(sec, "OLLAMA_LOG_LEVEL configured", "")
-		} else {
-			r.warn(sec, "OLLAMA_LOG_LEVEL not set — Ollama logging at default verbosity",
+		// OLLAMA_DEBUG is only written when debug mode is on (see
+		// ollamaPlist()) — unlike the old, always-written OLLAMA_LOG_LEVEL
+		// this replaced, a bare presence check isn't enough on its own; it
+		// has to match what the config actually asked for.
+		wantDebug := cfg.Tools.Ollama.Debug
+		hasDebug := strings.Contains(content, "<key>OLLAMA_DEBUG</key>")
+		switch {
+		case wantDebug && hasDebug:
+			r.pass(sec, "OLLAMA_DEBUG enabled per config", "")
+		case !wantDebug && !hasDebug:
+			r.pass(sec, "OLLAMA_DEBUG correctly unset (debug mode disabled)", "")
+		case wantDebug && !hasDebug:
+			r.warn(sec, "OLLAMA_DEBUG expected but missing from plist",
+				"Fix: sudo headless-macs install-tools")
+		default:
+			r.warn(sec, "OLLAMA_DEBUG set in plist but debug mode disabled in config — plist is stale",
 				"Fix: sudo headless-macs install-tools")
 		}
 		if cfg.Storage.UseExternalVolume {

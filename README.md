@@ -269,12 +269,8 @@ headless-macs/
 │   ├── tui/                   # Bubble Tea TUI (menu, screens, styles)
 │   └── log/                   # Structured log writer
 ├── config.json                # Config template (copied to ~/.headless_macs/ on first run)
-├── modelfiles/
-│   ├── qwen3-coder-next-256k-agent.modelfile  # Agent: low temp, tool rules
-│   ├── qwen3-coder-next-256k.modelfile        # Chat: higher temp
-│   └── qwen3-coder-next-128k.modelfile        # Reduced context for memory headroom
 ├── docs/
-│   ├── modelfile-guide.md     # Modelfile system, ollama create workflow
+│   ├── modelfile-guide.md     # Modelfile num_ctx/client-metadata behavior, GGUF vs MLX
 │   ├── tool-comparison.md     # Ollama vs Rapid-MLX vs mlx-lm vs Infinity vs Exo
 │   ├── ram-sizing.md          # Model size × quantisation × RAM + KV cache reference
 │   ├── storage-guide.md       # External volume: APFS, fstab, symlink map
@@ -315,29 +311,26 @@ sudo ./headless-macs    # → v (Verify)
 
 See [`docs/ram-sizing.md`](docs/ram-sizing.md) for full model recommendations by hardware tier.
 
-### Register production Modelfiles
+### Register a Modelfile (optional)
 
-Modelfiles bake `num_ctx` and sampling parameters into model metadata so clients see the correct context window.
+A Modelfile bakes `num_ctx` and sampling parameters into a model's metadata so clients see the correct context window — the Ollama UI's context slider and `OLLAMA_MAX_CONTEXT` are both server-side only and invisible to clients (see `docs/modelfile-guide.md`).
 
 ```bash
-ollama create qwen3-coder-next-256k-agent -f modelfiles/qwen3-coder-next-256k-agent.modelfile
-ollama create qwen3-coder-next-256k       -f modelfiles/qwen3-coder-next-256k.modelfile
-ollama create qwen3-coder-next-128k       -f modelfiles/qwen3-coder-next-128k.modelfile
+ollama create <model-name> -f /path/to/your.modelfile
 
-# Pin the primary model in memory to avoid cold-start delays
+# Pin a model in memory to avoid cold-start delays
 curl -s http://localhost:11434/api/generate \
-  -d '{"model": "qwen3-coder-next-256k-agent", "keep_alive": -1}' > /dev/null
+  -d '{"model": "<model-name>", "keep_alive": -1}' > /dev/null
 ```
 
-See [`docs/modelfile-guide.md`](docs/modelfile-guide.md) for parameter rationale and the agent vs chat split pattern.
+See [`docs/modelfile-guide.md`](docs/modelfile-guide.md) for why this matters and the GGUF vs MLX distinction; see [Ollama's own Modelfile reference](https://github.com/ollama/ollama/blob/main/docs/modelfile.md) for the full parameter set.
 
 ### Point a coding agent at Ollama
 
 ```
 Base URL: http://<mac-ip>:11434/v1
 API Key:  (any string — Ollama ignores it)
-Model:    qwen3-coder-next-256k-agent   (agentic tasks — use Zoo Code)
-Model:    qwen3-coder-next-256k         (chat — use Opilot or Copilot)
+Model:    <the Ollama model name you pulled or created>
 ```
 
 **Note:** VS Code Copilot agent mode has a known tool call loop bug with local GGUF models. Use Zoo Code for agentic tasks. See [`docs/known-issues.md`](docs/known-issues.md).

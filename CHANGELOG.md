@@ -67,6 +67,29 @@ Targeted for `v2.3.1` (Patch). Includes PRs [#19](https://github.com/mediumroast
   location for one invocation; works anywhere in the argument list, with
   any subcommand or the TUI.
 
+The following are targeted for `v2.4.0` (Minor — a new capability, not a
+bug fix) rather than the `v2.3.1` patch above; grouped here until release
+scopes are actually cut. See `docs/planning/PHASE_13_PLAN.md`.
+
+- **`headless-macs-debug start <tool>` / `stop <tool>`** — begin/end a
+  debug session: toggle the daemon's debug-level logging by editing one
+  key in its existing LaunchDaemon plist in place (via `PlistBuddy`,
+  leaving everything else untouched), force a log rotation, and restart
+  so the change actually takes effect (`EnvironmentVariables` are only
+  read once at process start). `start` rotates before restarting so the
+  session begins in a fresh file; `stop` restarts first and rotates after,
+  archiving the complete session before quiet logging resumes. Currently
+  supported for `ollama` only — the other tools toggle verbosity through a
+  different mechanism, or have none yet.
+- **`headless-macs-debug mark <tool> --start / --stop [message]`** —
+  appends a timestamped, grep-able marker line to a tool's `stdout.log`
+  and `stderr.log`, independent of `start`/`stop` and working for any of
+  the six managed tools. Safe to run while the daemon is actively writing
+  to the same files (POSIX-guaranteed atomic append, the same mechanism
+  `logger`(1)/syslog rely on) — confirmed, not assumed. Takes an optional
+  trailing free-text message, appended to the marker line, for telling
+  apart multiple marked runs in the same log file.
+
 ## [2.3.0] — 2026-09-10
 
 Phase 11: fixes for issues #13–#17, plus a new debugging-tools capability.

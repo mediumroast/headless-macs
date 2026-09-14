@@ -157,6 +157,28 @@ Each run forces an out-of-cycle rotation using the same shared `logrotate` confi
 
 > **Testing status:** the full flow — rotate, bundle, sudo NOPASSWD over non-interactive SSH, `scp` off the box — is live-verified end to end for `ollama` only. The other five tools' log directories (`rapid-mlx`, `mlx-lm`, `infinity`, `exo`, `macmon`) are structurally identical, but haven't been exercised live since they aren't enabled on the boxes this was tested on. Treat those as untested, not broken, until confirmed.
 
+### Debug sessions: `start`, `stop`, `mark`
+
+```bash
+sudo headless-macs-debug start ollama   # put ollama into debug-level logging, rotate, restart
+sudo headless-macs-debug stop ollama    # back to standard logging, restart, rotate again
+
+sudo headless-macs-debug mark ollama --start   # append a timestamped marker to stdout.log/stderr.log
+sudo headless-macs-debug mark ollama --stop    # same, for the other end of whatever you're marking
+
+sudo headless-macs-debug mark ollama --start load test run 4   # optional trailing note in the marker
+```
+
+`start`/`stop` edit exactly one key (`OLLAMA_DEBUG`) in the daemon's existing LaunchDaemon plist in place — via `PlistBuddy`, leaving every other setting untouched — then restart the daemon, since `EnvironmentVariables` are only read once at process start. `start` rotates the logs *before* restarting, so the debug session begins in a fresh file; `stop` restarts first and rotates *after*, so the complete session gets archived into its own rotation before quiet logging resumes. `stop` exits with a plain status code — nothing else, no bundle path — pull the archived logs off with `logs ollama` yourself afterward if you want them.
+
+`mark` takes an optional trailing message — every word after `--start`/`--stop` is joined with spaces and included in the marker line — useful for telling apart several marked runs in the same log file.
+
+**Currently supported for `start`/`stop`: `ollama` only.** The other tools toggle verbosity through a different mechanism (a `--log-level` CLI argument, not an environment variable) or have no verbosity toggle at all yet — see `docs/planning/PHASE_13_PLAN.md` for the detail.
+
+**Running `sudo headless-macs install-tools` while a debug session is active reverts the toggle** — `install-tools` always regenerates the plist from `config.json`, which is expected, not a bug. `start` prints a note about this each time.
+
+`mark` is fully independent of `start`/`stop` — it never gets called automatically by either, and works for any of the six tools (it only needs the tool's log directory, which all six have) even though `start`/`stop` don't yet. Use it to bound whatever you're currently doing in the logs without needing a daemon restart at all. Appending to a log file the daemon is also actively writing to is safe — POSIX guarantees a single write to an append-mode file descriptor can't be torn or interleaved with another process's concurrent write, the same guarantee tools like `logger`(1) and syslog rely on.
+
 ### Passwordless sudo — an explicit escalation you opt into
 
 `headless-macs-debug logs` needs to run as root (log rotation has to truncate files it doesn't own), so over a plain SSH session you'd normally hit an interactive sudo password prompt — awkward for scripted/automated pulls. `headless-macs` can grant one specific user passwordless (`NOPASSWD`) sudo access for exactly that one binary, and only that binary — not `NOPASSWD: ALL`, not broader admin rights.

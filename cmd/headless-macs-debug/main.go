@@ -1,15 +1,10 @@
 // Command headless-macs-debug is a small, separate debugging utility
 // installed alongside headless-macs. It's intentionally its own binary
 // rather than a subcommand of the main tool — see
-// docs/planning/PHASE_11_PLAN.md, Phase 11F.
-//
-// Today it has one subcommand, `logs`, which forces an out-of-cycle
-// rotation of every managed service's logs (reusing the shared
-// logrotate config headless-macs install-tools already writes — this
-// does not reimplement rotation logic) and bundles the result into a
-// single timestamped tar.gz, ready to scp off the box. Named
-// `headless-macs-debug` rather than `headless-macs-debug-logs` so more
-// subcommands can be added later without a rename.
+// docs/planning/PHASE_11_PLAN.md, Phase 11F. Named `headless-macs-debug`
+// rather than `headless-macs-debug-logs` so subcommands could be added
+// later without a rename — see docs/planning/PHASE_13_PLAN.md, Phase 13,
+// for `start`/`stop`/`mark`.
 package main
 
 import (
@@ -53,6 +48,9 @@ const usage = `headless-macs-debug — debugging utilities for headless-macs
 Usage:
   sudo headless-macs-debug logs [tool] [--keep=N]
   sudo headless-macs-debug clean
+  sudo headless-macs-debug start <tool>
+  sudo headless-macs-debug stop <tool>
+  sudo headless-macs-debug mark <tool> --start | --stop [message]
 
 Commands:
   logs [tool]   Force a log rotation and bundle the result into a
@@ -67,6 +65,25 @@ Commands:
                 /var/log/mac-llm-setup/bundles/, freeing the space they
                 use. No confirmation prompt — this is a scriptable admin
                 tool, not an interactive one.
+  start <tool>  Begin a debug session: put <tool>'s daemon into debug-level
+                logging, force a log rotation, and restart it so the fresh
+                logs start at debug verbosity. Currently supported: ollama
+                only (see README.md for why the others differ). Running
+                'sudo headless-macs install-tools' while a debug session is
+                active reverts this — that's expected, not a bug.
+  stop <tool>   End a debug session: return <tool>'s daemon to standard
+                logging, restart it, and rotate the logs again so the
+                debug-session output is archived on its own. Exits with a
+                plain status code — no special output.
+  mark <tool> --start | --stop [message]
+                Append a timestamped, grep-able marker line to <tool>'s
+                stdout.log and stderr.log — independent of start/stop, for
+                marking the boundary of whatever you're currently doing
+                without restarting the daemon. Works for any of: ollama,
+                rapid-mlx, mlx-lm, infinity, exo, macmon. An optional
+                trailing message (all remaining words, space-joined) is
+                appended to the marker line, e.g.
+                'mark ollama --start load test run 4'.
 
 Must be run as root (sudo) — log rotation needs to truncate files it
 doesn't own. If you're running this over a non-interactive SSH session
@@ -123,6 +140,41 @@ func main() {
 			fmt.Fprintln(os.Stderr, "ERROR:", err)
 			os.Exit(1)
 		}
+	case "start":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "ERROR: start requires a tool name, e.g. 'start ollama'")
+			os.Exit(1)
+		}
+		if err := runStart(args[1]); err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR:", err)
+			os.Exit(1)
+		}
+	case "stop":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "ERROR: stop requires a tool name, e.g. 'stop ollama'")
+			os.Exit(1)
+		}
+		if err := runStop(args[1]); err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR:", err)
+			os.Exit(1)
+		}
+	case "mark":
+		start, rest := extractBoolFlag(args[1:], "start")
+		stop, rest := extractBoolFlag(rest, "stop")
+		if len(rest) < 1 {
+			fmt.Fprintln(os.Stderr, "ERROR: mark requires a tool name, e.g. 'mark ollama --start'")
+			os.Exit(1)
+		}
+		if start == stop {
+			fmt.Fprintln(os.Stderr, "ERROR: mark requires exactly one of --start or --stop")
+			os.Exit(1)
+		}
+		tool := rest[0]
+		msg := strings.Join(rest[1:], " ")
+		if err := runMark(tool, start, msg); err != nil {
+			fmt.Fprintln(os.Stderr, "ERROR:", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n%s", args[0], usage)
 		os.Exit(1)
@@ -173,6 +225,28 @@ func extractIntFlag(args []string, name string, def int) (value int, rest []stri
 	return value, rest, nil
 }
 
+// extractBoolFlag scans args for the bare flag --name anywhere in the
+// list, removing it from the returned slice, and reports whether it was
+// present. Same rationale as extractIntFlag: Go's stdlib flag package
+// stops parsing at the first non-flag token, so `mark ollama --start`
+// (tool-name-then-flag, the documented and natural order) never actually
+// got recognized as --start with flag.Parse() — both --start and --stop
+// silently stayed false regardless of what was passed, which is exactly
+// the bug reported live ("requires exactly one of --start or --stop"
+// despite --start clearly being given).
+func extractBoolFlag(args []string, name string) (found bool, rest []string) {
+	bare := "--" + name
+	rest = make([]string, 0, len(args))
+	for _, a := range args {
+		if a == bare {
+			found = true
+			continue
+		}
+		rest = append(rest, a)
+	}
+	return found, rest
+}
+
 func runLogs(tool string, keep int) error {
 	if tool != "" {
 		if _, ok := toolLogDirs[tool]; !ok {
@@ -193,17 +267,8 @@ func runLogs(tool string, keep int) error {
 	}
 	defer unlock()
 
-	// Force rotation via the existing shared logrotate config — does not
-	// reimplement rotation logic, just triggers it out of its normal
-	// daily schedule.
-	if _, err := os.Stat(logrotateConfigPath); err == nil {
-		cmd := exec.Command(logrotateBin(), "-f", "-s", logrotateStatusPath, logrotateConfigPath)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("logrotate failed: %v\n%s", err, out)
-		}
-	} else {
-		fmt.Fprintln(os.Stderr, "WARNING: "+logrotateConfigPath+" not found — install-tools may not have run yet; bundling logs as-is, unrotated.")
+	if err := forceRotateLogs(); err != nil {
+		return err
 	}
 
 	if err := os.MkdirAll(bundleDir, 0755); err != nil {
@@ -232,6 +297,23 @@ func runLogs(tool string, keep int) error {
 	}
 
 	fmt.Println(bundlePath)
+	return nil
+}
+
+// forceRotateLogs triggers an out-of-cycle rotation via the existing
+// shared logrotate config — does not reimplement rotation logic, just
+// triggers it outside its normal daily schedule. Shared by runLogs,
+// runStart, and runStop rather than duplicated in each.
+func forceRotateLogs() error {
+	if _, err := os.Stat(logrotateConfigPath); err != nil {
+		fmt.Fprintln(os.Stderr, "WARNING: "+logrotateConfigPath+" not found — install-tools may not have run yet; skipping rotation.")
+		return nil
+	}
+	cmd := exec.Command(logrotateBin(), "-f", "-s", logrotateStatusPath, logrotateConfigPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("logrotate failed: %v\n%s", err, out)
+	}
 	return nil
 }
 
@@ -461,6 +543,192 @@ func runClean() error {
 		removed++
 	}
 	fmt.Printf("removed %d bundle(s), freed %s\n", removed, formatBytes(freed))
+	return nil
+}
+
+// toolDebugToggle describes how to enable/disable debug-level logging for
+// one tool's LaunchDaemon plist. Only "ollama" is implemented today —
+// rapid-mlx/mlx-lm/Infinity toggle verbosity via a --log-level CLI
+// argument (an array element in ProgramArguments), not an environment
+// variable like Ollama, a materially different PlistBuddy operation
+// shape; Exo and macmon have no verbosity toggle at all currently. See
+// docs/planning/PHASE_13_PLAN.md, Phase 13C. Adding another tool later is
+// "implement one more table entry and its enable/disable funcs," not a
+// redesign of start/stop themselves.
+type toolDebugToggle struct {
+	plistPath string
+	enable    func(plistPath string) error
+	disable   func(plistPath string) error
+}
+
+var toolDebugToggles = map[string]toolDebugToggle{
+	"ollama": {
+		plistPath: "/Library/LaunchDaemons/com.ollama.server.plist",
+		enable:    enableOllamaDebug,
+		disable:   disableOllamaDebug,
+	},
+}
+
+const ollamaDebugKey = ":EnvironmentVariables:OLLAMA_DEBUG"
+
+// enableOllamaDebug adds OLLAMA_DEBUG=1 to the plist's EnvironmentVariables
+// dict — Ollama's actual, sole documented verbosity switch (see
+// docs/troubleshooting.mdx in ollama/ollama: "OLLAMA_DEBUG=1"), not the
+// OLLAMA_LOG_LEVEL this project used to write before that was found to be
+// fabricated (see PHASE_12_PLAN.md). PlistBuddy's Add fails if the key
+// already exists, so presence is checked first and treated as a no-op
+// rather than an error — this can be called on an already-debug-mode
+// daemon safely.
+func enableOllamaDebug(plistPath string) error {
+	if plistBuddyHasKey(plistPath, ollamaDebugKey) {
+		fmt.Println("OLLAMA_DEBUG already set — already in debug mode")
+		return nil
+	}
+	return plistBuddy(plistPath, "Add "+ollamaDebugKey+" string 1")
+}
+
+// disableOllamaDebug removes OLLAMA_DEBUG from the plist. PlistBuddy's
+// Delete fails if the key is absent, so presence is checked first and
+// treated as a no-op — safe to call when not currently in debug mode.
+func disableOllamaDebug(plistPath string) error {
+	if !plistBuddyHasKey(plistPath, ollamaDebugKey) {
+		fmt.Println("OLLAMA_DEBUG already unset — not in debug mode")
+		return nil
+	}
+	return plistBuddy(plistPath, "Delete "+ollamaDebugKey)
+}
+
+// plistBuddyHasKey reports whether entry exists in plistPath, via
+// PlistBuddy's own Print command rather than parsing the plist's XML —
+// PlistBuddy already understands the format correctly, including array
+// indices and nested dicts, so there's no reason to reimplement that.
+func plistBuddyHasKey(plistPath, entry string) bool {
+	return exec.Command("/usr/libexec/PlistBuddy", "-c", "Print "+entry, plistPath).Run() == nil
+}
+
+// plistBuddy runs one PlistBuddy command against plistPath, editing it in
+// place — everything else in the file is left untouched, unlike
+// regenerating the whole plist the way install-tools does.
+func plistBuddy(plistPath, command string) error {
+	out, err := exec.Command("/usr/libexec/PlistBuddy", "-c", command, plistPath).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("PlistBuddy %q on %s failed: %v\n%s", command, plistPath, err, out)
+	}
+	return nil
+}
+
+// restartDaemon reloads plistPath via bootout+bootstrap — the only way a
+// LaunchDaemon picks up an EnvironmentVariables change, since those are
+// read once at process start, never live-reloaded. bootout's error is
+// ignored: it's expected and harmless if the daemon wasn't currently
+// loaded for some reason.
+func restartDaemon(plistPath string) error {
+	_ = exec.Command("launchctl", "bootout", "system", plistPath).Run()
+	out, err := exec.Command("launchctl", "bootstrap", "system", plistPath).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("launchctl bootstrap failed: %v\n%s", err, out)
+	}
+	return nil
+}
+
+// runStart begins a debug session for tool: enable debug-level logging in
+// its plist, force a log rotation (so the debug session starts in a fresh
+// file), then restart the daemon so the new plist actually takes effect.
+func runStart(tool string) error {
+	toggle, err := lookupDebugToggle(tool)
+	if err != nil {
+		return err
+	}
+	if err := toggle.enable(toggle.plistPath); err != nil {
+		return err
+	}
+	if err := forceRotateLogs(); err != nil {
+		return err
+	}
+	if err := restartDaemon(toggle.plistPath); err != nil {
+		return err
+	}
+	fmt.Printf("%s is now in debug mode (%s)\n", tool, toggle.plistPath)
+	fmt.Println("Note: running 'sudo headless-macs install-tools' while this debug session is active will revert this — it regenerates the plist from config.json.")
+	return nil
+}
+
+// runStop ends a debug session for tool: disable debug-level logging,
+// restart the daemon, then rotate the logs again so the debug session's
+// output is archived on its own, separate from whatever normal-verbosity
+// logging follows. No special output — just standard exit codes.
+func runStop(tool string) error {
+	toggle, err := lookupDebugToggle(tool)
+	if err != nil {
+		return err
+	}
+	if err := toggle.disable(toggle.plistPath); err != nil {
+		return err
+	}
+	if err := restartDaemon(toggle.plistPath); err != nil {
+		return err
+	}
+	return forceRotateLogs()
+}
+
+// lookupDebugToggle distinguishes an entirely unknown tool name from a
+// known one that just doesn't support start/stop yet, so the two error
+// messages don't get confused with each other.
+func lookupDebugToggle(tool string) (toolDebugToggle, error) {
+	if _, ok := toolLogDirs[tool]; !ok {
+		return toolDebugToggle{}, fmt.Errorf("unknown tool %q (expected one of: ollama, rapid-mlx, mlx-lm, infinity, exo, macmon)", tool)
+	}
+	toggle, ok := toolDebugToggles[tool]
+	if !ok {
+		return toolDebugToggle{}, fmt.Errorf("start/stop not yet supported for %q (currently: ollama only)", tool)
+	}
+	return toggle, nil
+}
+
+// runMark appends a timestamped, grep-able marker line to tool's
+// stdout.log and stderr.log — independent of start/stop, for marking a
+// boundary in the logs without restarting the daemon. Safe to run
+// concurrently with anything else touching these files: appending with
+// O_APPEND is POSIX-guaranteed atomic up to PIPE_BUF for a single write(),
+// so a second process (the daemon itself) writing at the same time can
+// never see a torn/interleaved line — the same mechanism logger(1) and
+// syslog rely on. Works for any tool in toolLogDirs, not just the ones
+// start/stop support. msg is an optional free-text note (e.g. "load test
+// run 4") appended to the marker line — empty means no note.
+func runMark(tool string, isStart bool, msg string) error {
+	dir, ok := toolLogDirs[tool]
+	if !ok {
+		return fmt.Errorf("unknown tool %q (expected one of: ollama, rapid-mlx, mlx-lm, infinity, exo, macmon)", tool)
+	}
+	label := "STOP"
+	if isStart {
+		label = "START"
+	}
+	ts := time.Now().UTC().Format(time.RFC3339)
+	marker := fmt.Sprintf("##### headless-macs-debug: DEBUG SESSION %s %s #####\n", label, ts)
+	if msg != "" {
+		marker = fmt.Sprintf("##### headless-macs-debug: DEBUG SESSION %s %s — %s #####\n", label, ts, msg)
+	}
+
+	var failures []string
+	for _, name := range []string{"stdout.log", "stderr.log"} {
+		path := filepath.Join(dir, name)
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", path, err))
+			continue
+		}
+		_, writeErr := f.WriteString(marker)
+		closeErr := f.Close()
+		if writeErr != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", path, writeErr))
+		} else if closeErr != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", path, closeErr))
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("could not write marker to: %s", strings.Join(failures, "; "))
+	}
 	return nil
 }
 

@@ -7,9 +7,63 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [Unreleased]
+## [2.4.0] — 2026-09-14
 
-Targeted for `v2.3.1` (Patch). Includes PRs [#19](https://github.com/mediumroast/headless-macs/pull/19) and [#20](https://github.com/mediumroast/headless-macs/pull/20)'s fixes, which this work builds on — see those PRs for their own detail.
+Phase 13: debug-session tooling — put a running tool into debug-level
+logging on demand, or just mark a boundary in its logs, without touching
+`config.json` or restarting `install-tools`. Live-tested end to end on
+the doppios, including a real bug (`mark`'s `--start`/`--stop` flags
+silently never matching, same root cause as the `--keep` bug below)
+found and fixed via that testing.
+
+### Added
+
+- **`headless-macs-debug start <tool>` / `stop <tool>`** — begin/end a
+  debug session: toggle the daemon's debug-level logging by editing one
+  key in its existing LaunchDaemon plist in place (via `PlistBuddy`,
+  leaving everything else untouched), force a log rotation, and restart
+  so the change actually takes effect (`EnvironmentVariables` are only
+  read once at process start). `start` rotates before restarting so the
+  session begins in a fresh file; `stop` restarts first and rotates after,
+  archiving the complete session before quiet logging resumes. Currently
+  supported for `ollama` only — the other tools toggle verbosity through a
+  different mechanism, or have none yet. Running `install-tools` while a
+  debug session is active silently reverts the toggle — expected, since
+  `install-tools` always regenerates the plist from `config.json`.
+- **`headless-macs-debug mark <tool> --start / --stop [message]`** —
+  appends a timestamped, grep-able marker line to a tool's `stdout.log`
+  and `stderr.log`, independent of `start`/`stop` and working for any of
+  the six managed tools. Safe to run while the daemon is actively writing
+  to the same files (POSIX-guaranteed atomic append, the same mechanism
+  `logger`(1)/syslog rely on) — confirmed, not assumed. Takes an optional
+  trailing free-text message, appended to the marker line, for telling
+  apart multiple marked runs in the same log file.
+
+### Fixed
+
+- **`mark ollama --start`/`--stop` never actually matched either flag**
+  — Go's stdlib `flag` package stops parsing at the first non-flag
+  token, so tool-name-then-flag (the documented, natural order) never
+  reached `flag.Parse()` as a flag at all; `mark` failed every time with
+  "requires exactly one of --start or --stop" regardless of what was
+  passed. Found live over SSH, not caught by earlier "verified locally"
+  testing (which exercised `--help` variants and isolated unit logic,
+  but never the real end-to-end invocation shape). Replaced with a
+  manual, position-independent `extractBoolFlag()`, matching the same
+  fix already applied to `logs --keep` below. 4 new tests, including an
+  end-to-end regression for the exact reported scenario in both argument
+  orders.
+
+### PR
+
+[#23](https://github.com/mediumroast/headless-macs/pull/23)
+
+## [2.3.1] — 2026-09-14
+
+Phase 12: a batch of correctness and reliability fixes surfaced while
+auditing the Ollama environment-variable settings and the debug-log
+bundling path, plus a config-location fragility found via a related
+investigation into `sudo`'s `$HOME` behavior.
 
 ### Fixed
 
@@ -55,6 +109,24 @@ Targeted for `v2.3.1` (Patch). Includes PRs [#19](https://github.com/mediumroast
   unreadable to the actual human operator without another `sudo` —
   contradicting README's own claim that it could be edited directly. Now
   `0644`.
+- **`logs ollama --keep=N` (tool-name-then-flag, the documented order)
+  silently ignored `--keep` entirely, always using the default `2`** —
+  same root cause later found in `mark` (`v2.4.0` above): Go's stdlib
+  `flag` package stops parsing at the first non-flag token, so `flag.Parse()`
+  on `["ollama", "--keep=5"]` never sees `--keep` as a flag at all. Not
+  caught by this PR's own earlier "verified locally" claim, which tested
+  `--help` behavior but never the actual flag value together with a tool
+  name. Replaced with a manual, position-independent `extractIntFlag()`.
+  7 new tests.
+- **A real account username was committed in `docs/planning/PHASE_14_PLAN.md`**
+  and in one of three unused example `.modelfile` files plus
+  `docs/modelfile-guide.md` — this is a public repo, so both are genuine
+  PII exposures, not just style issues. Genericized the plan doc; deleted
+  the entire unused `modelfiles/` directory (zero references from any Go
+  code) and trimmed `docs/modelfile-guide.md` to the still-generic,
+  still-referenced content (`num_ctx`/GGUF-vs-MLX behavior), dropping
+  everything tied to one specific model's tuning. Added a standing "No
+  PII in documentation" rule to `CLAUDE.md` to prevent recurrence.
 
 ### Added
 
@@ -67,28 +139,12 @@ Targeted for `v2.3.1` (Patch). Includes PRs [#19](https://github.com/mediumroast
   location for one invocation; works anywhere in the argument list, with
   any subcommand or the TUI.
 
-The following are targeted for `v2.4.0` (Minor — a new capability, not a
-bug fix) rather than the `v2.3.1` patch above; grouped here until release
-scopes are actually cut. See `docs/planning/PHASE_13_PLAN.md`.
+### PR
 
-- **`headless-macs-debug start <tool>` / `stop <tool>`** — begin/end a
-  debug session: toggle the daemon's debug-level logging by editing one
-  key in its existing LaunchDaemon plist in place (via `PlistBuddy`,
-  leaving everything else untouched), force a log rotation, and restart
-  so the change actually takes effect (`EnvironmentVariables` are only
-  read once at process start). `start` rotates before restarting so the
-  session begins in a fresh file; `stop` restarts first and rotates after,
-  archiving the complete session before quiet logging resumes. Currently
-  supported for `ollama` only — the other tools toggle verbosity through a
-  different mechanism, or have none yet.
-- **`headless-macs-debug mark <tool> --start / --stop [message]`** —
-  appends a timestamped, grep-able marker line to a tool's `stdout.log`
-  and `stderr.log`, independent of `start`/`stop` and working for any of
-  the six managed tools. Safe to run while the daemon is actively writing
-  to the same files (POSIX-guaranteed atomic append, the same mechanism
-  `logger`(1)/syslog rely on) — confirmed, not assumed. Takes an optional
-  trailing free-text message, appended to the marker line, for telling
-  apart multiple marked runs in the same log file.
+[#19](https://github.com/mediumroast/headless-macs/pull/19),
+[#20](https://github.com/mediumroast/headless-macs/pull/20),
+[#21](https://github.com/mediumroast/headless-macs/pull/21),
+[#22](https://github.com/mediumroast/headless-macs/pull/22)
 
 ## [2.3.0] — 2026-09-10
 
@@ -640,7 +696,9 @@ Initial release: single-script pmset + Ollama LaunchDaemon setup.
 
 ---
 
-[Unreleased]: https://github.com/mediumroast/headless-macs/compare/v2.3.0...HEAD
+[Unreleased]: https://github.com/mediumroast/headless-macs/compare/v2.4.0...HEAD
+[2.4.0]: https://github.com/mediumroast/headless-macs/compare/v2.3.1...v2.4.0
+[2.3.1]: https://github.com/mediumroast/headless-macs/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/mediumroast/headless-macs/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/mediumroast/headless-macs/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/mediumroast/headless-macs/compare/v2.1.1...v2.2.0

@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 )
 
@@ -28,6 +29,7 @@ const (
 	logrotateStatusPath = "/var/log/mac-llm-setup/logrotate.status"
 	opsLogDir           = "/var/log/mac-llm-setup"
 	bundleDir           = "/var/log/mac-llm-setup/bundles"
+	lockPath            = "/var/log/mac-llm-setup/headless-macs-debug.lock"
 )
 
 // toolLogDirs maps the CLI-facing tool name to its log directory, for
@@ -99,6 +101,19 @@ func runLogs(tool string) error {
 		}
 	}
 
+	// Only one `logs` run at a time. Without this, a caller whose SSH
+	// session times out mid-run (the process it started keeps running
+	// detached on the box) and then retries ends up with multiple
+	// concurrent runs racing the same logrotate state file and piling up
+	// CPU/disk work — found live, several stacked-up runs on doppio-1.
+	// flock auto-releases if this process dies for any reason, so there's
+	// no stale-lock cleanup to get wrong.
+	unlock, err := acquireLock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	// Force rotation via the existing shared logrotate config — does not
 	// reimplement rotation logic, just triggers it out of its normal
 	// daily schedule.
@@ -138,6 +153,29 @@ func runLogs(tool string) error {
 	return nil
 }
 
+// acquireLock takes an exclusive, non-blocking flock on lockPath so only
+// one `logs` run can be in progress at a time. Returns an unlock func to
+// defer; the lock is also released automatically if the process dies
+// without calling it (flock is tied to the open file descriptor, not a
+// PID file some other process would have to notice and clean up).
+func acquireLock() (func(), error) {
+	if err := os.MkdirAll(opsLogDir, 0755); err != nil {
+		return nil, fmt.Errorf("could not create %s: %w", opsLogDir, err)
+	}
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("could not open lock file %s: %w", lockPath, err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("another 'headless-macs-debug logs' run is already in progress (lock: %s)", lockPath)
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+	}, nil
+}
+
 // logrotateBin locates the logrotate binary, matching
 // internal/ops/tools.go's own fallback (Homebrew formula path when not
 // on PATH).
@@ -151,6 +189,17 @@ func logrotateBin() string {
 // bundleDirs writes every regular file found under the given directories
 // (skipping ones that don't exist — a tool that isn't enabled has no log
 // dir at all) into a single gzipped tar at dest.
+//
+// bundleDir (where dest itself lives) is nested inside opsLogDir, and
+// opsLogDir is one of the dirs always bundled — so without an explicit
+// exclusion, every bundle would recursively pack in every bundle that
+// came before it (each of which already contains everything before that),
+// plus its own in-progress output file being written into itself mid-walk.
+// Found live: a handful of runs on doppio-1 went 9MB -> 27MB -> ... -> 79GB
+// from a source log directory that was never more than a few hundred KB.
+// Excluding bundleDir here, rather than just not including opsLogDir as a
+// source, is the actual fix — it holds regardless of how these paths are
+// ever laid out relative to each other in the future.
 func bundleDirs(dest string, dirs []string) error {
 	f, err := os.Create(dest)
 	if err != nil {
@@ -169,7 +218,13 @@ func bundleDirs(dest string, dirs []string) error {
 			continue
 		}
 		err = filepath.Walk(dir, func(path string, fi os.FileInfo, err error) error {
-			if err != nil || fi.IsDir() {
+			if err != nil {
+				return nil
+			}
+			if fi.IsDir() {
+				if path == bundleDir {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			rel, err := filepath.Rel("/var/log", path)
